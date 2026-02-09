@@ -18,7 +18,10 @@ use tracing::{debug, error, info, warn};
 use super::drm_lease::HmdManager;
 use super::eye_tracking::EyeTracking;
 use super::frame_timing::FrameTiming;
+use super::blink_wink::BlinkWinkManager;
+use super::fatigue::FatigueMonitor;
 use super::gaze_focus::GazeFocusManager;
+use super::gaze_zone::ZoneDetector;
 use super::scene::VrScene;
 use super::vr_interaction::VrInteraction;
 
@@ -102,6 +105,9 @@ pub struct VrState {
     pub interaction: VrInteraction,
     pub eye_tracking: EyeTracking,
     pub gaze_focus: GazeFocusManager,
+    pub blink_wink: BlinkWinkManager,
+    pub zone_detector: ZoneDetector,
+    pub fatigue_monitor: FatigueMonitor,
 
     // OpenXR objects (Option because they're created incrementally)
     entry: Option<xr::Entry>,
@@ -134,6 +140,9 @@ impl VrState {
             interaction: VrInteraction::new(),
             eye_tracking: EyeTracking::new(),
             gaze_focus: GazeFocusManager::new(),
+            blink_wink: BlinkWinkManager::new(),
+            zone_detector: ZoneDetector::new(),
+            fatigue_monitor: FatigueMonitor::new(),
             entry: None,
             instance: None,
             system_id: None,

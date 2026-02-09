@@ -33,3 +33,6 @@ pub mod drm_lease;
 pub mod vr_interaction;
 pub mod eye_tracking;
 pub mod gaze_focus;
+pub mod gaze_zone;
+pub mod fatigue;
+pub mod blink_wink;

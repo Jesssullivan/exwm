@@ -86,6 +86,20 @@ pub fn handle_message(state: &mut EwwmState, client_id: u64, raw: &str) -> Optio
         Some("gaze-focus-set-cooldown") => handle_gaze_focus_set_cooldown(state, msg_id, &value),
         Some("gaze-focus-analytics") => handle_gaze_focus_analytics(state, msg_id),
         Some("gaze-focus-back") => handle_gaze_focus_back(state, msg_id),
+        // Blink/wink (Week 13)
+        Some("wink-status") => handle_wink_status(state, msg_id),
+        Some("wink-config") => handle_wink_config(state, msg_id),
+        Some("wink-calibrate-start") => handle_wink_calibrate_start(state, msg_id, &value),
+        Some("wink-set-confidence") => handle_wink_set_confidence(state, msg_id, &value),
+        // Gaze zones (Week 13)
+        Some("gaze-zone-status") => handle_gaze_zone_status(state, msg_id),
+        Some("gaze-zone-config") => handle_gaze_zone_config(state, msg_id),
+        Some("gaze-zone-set-dwell") => handle_gaze_zone_set_dwell(state, msg_id, &value),
+        // Fatigue (Week 13)
+        Some("fatigue-status") => handle_fatigue_status(state, msg_id),
+        Some("fatigue-config") => handle_fatigue_config(state, msg_id),
+        Some("fatigue-metrics") => handle_fatigue_metrics(state, msg_id),
+        Some("fatigue-reset") => handle_fatigue_reset(state, msg_id),
         Some(other) => Some(error_response(
             msg_id,
             &format!("unknown message type: {other}"),
@@ -1028,6 +1042,119 @@ fn handle_gaze_focus_back(state: &mut EwwmState, msg_id: i64) -> Option<String> 
         )),
         None => Some(error_response(msg_id, "no focus history available")),
     }
+}
+
+// ── Blink/wink handlers (Week 13) ──────────────────────────
+
+fn handle_wink_status(state: &mut EwwmState, msg_id: i64) -> Option<String> {
+    let status = state.vr_state.blink_wink.status_sexp();
+    Some(format!(
+        "(:type :response :id {} :status :ok :wink {})",
+        msg_id, status
+    ))
+}
+
+fn handle_wink_config(state: &mut EwwmState, msg_id: i64) -> Option<String> {
+    let config = state.vr_state.blink_wink.config_sexp();
+    Some(format!(
+        "(:type :response :id {} :status :ok :config {})",
+        msg_id, config
+    ))
+}
+
+fn handle_wink_calibrate_start(
+    state: &mut EwwmState,
+    msg_id: i64,
+    value: &Value,
+) -> Option<String> {
+    let trials = get_int(value, "trials").unwrap_or(10);
+    state.vr_state.blink_wink.calibration.reset();
+    Some(format!(
+        "(:type :response :id {} :status :ok :calibration :started :trials {})",
+        msg_id, trials
+    ))
+}
+
+fn handle_wink_set_confidence(
+    state: &mut EwwmState,
+    msg_id: i64,
+    value: &Value,
+) -> Option<String> {
+    let threshold = get_int(value, "threshold").unwrap_or(70) as f32 / 100.0;
+    if !(0.0..=1.0).contains(&threshold) {
+        return Some(error_response(msg_id, "invalid :threshold (0-100)"));
+    }
+    state.vr_state.blink_wink.blink_detector.confidence_threshold = threshold;
+    Some(format!(
+        "(:type :response :id {} :status :ok :threshold {:.2})",
+        msg_id, threshold
+    ))
+}
+
+// ── Gaze zone handlers (Week 13) ──────────────────────────
+
+fn handle_gaze_zone_status(state: &mut EwwmState, msg_id: i64) -> Option<String> {
+    let status = state.vr_state.zone_detector.status_sexp();
+    Some(format!(
+        "(:type :response :id {} :status :ok :zone {})",
+        msg_id, status
+    ))
+}
+
+fn handle_gaze_zone_config(state: &mut EwwmState, msg_id: i64) -> Option<String> {
+    let config = state.vr_state.zone_detector.config_sexp();
+    Some(format!(
+        "(:type :response :id {} :status :ok :config {})",
+        msg_id, config
+    ))
+}
+
+fn handle_gaze_zone_set_dwell(
+    state: &mut EwwmState,
+    msg_id: i64,
+    value: &Value,
+) -> Option<String> {
+    let dwell_ms = match get_int(value, "dwell-ms") {
+        Some(d) if d >= 50 && d <= 2000 => d as f64,
+        _ => return Some(error_response(msg_id, "invalid :dwell-ms (50-2000)")),
+    };
+
+    state.vr_state.zone_detector.config.dwell_ms = dwell_ms;
+    Some(format!(
+        "(:type :response :id {} :status :ok :dwell-ms {:.0})",
+        msg_id, dwell_ms
+    ))
+}
+
+// ── Fatigue handlers (Week 13) ─────────────────────────────
+
+fn handle_fatigue_status(state: &mut EwwmState, msg_id: i64) -> Option<String> {
+    let status = state.vr_state.fatigue_monitor.status_sexp();
+    Some(format!(
+        "(:type :response :id {} :status :ok :fatigue {})",
+        msg_id, status
+    ))
+}
+
+fn handle_fatigue_config(state: &mut EwwmState, msg_id: i64) -> Option<String> {
+    let config = state.vr_state.fatigue_monitor.config_sexp();
+    Some(format!(
+        "(:type :response :id {} :status :ok :config {})",
+        msg_id, config
+    ))
+}
+
+fn handle_fatigue_metrics(state: &mut EwwmState, msg_id: i64) -> Option<String> {
+    let metrics = state.vr_state.fatigue_monitor.metrics_sexp();
+    Some(format!(
+        "(:type :response :id {} :status :ok :metrics {})",
+        msg_id, metrics
+    ))
+}
+
+fn handle_fatigue_reset(state: &mut EwwmState, msg_id: i64) -> Option<String> {
+    state.vr_state.fatigue_monitor.teardown();
+    Some(ok_response(msg_id))
 }
 
 // ── Helpers ────────────────────────────────────────────────
