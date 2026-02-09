@@ -55,6 +55,12 @@ pub fn handle_message(state: &mut EwwmState, client_id: u64, raw: &str) -> Optio
         Some("vr-scene-set-projection") => handle_vr_scene_set_projection(state, msg_id, &value),
         Some("vr-scene-focus") => handle_vr_scene_focus(state, msg_id, &value),
         Some("vr-scene-move") => handle_vr_scene_move(state, msg_id, &value),
+        Some("vr-display-info") => handle_vr_display_info(state, msg_id),
+        Some("vr-display-set-mode") => handle_vr_display_set_mode(state, msg_id, &value),
+        Some("vr-display-select-hmd") => handle_vr_display_select_hmd(state, msg_id, &value),
+        Some("vr-display-set-refresh-rate") => handle_vr_display_set_refresh_rate(state, msg_id, &value),
+        Some("vr-display-auto-detect") => handle_vr_display_auto_detect(state, msg_id),
+        Some("vr-display-list-connectors") => handle_vr_display_list_connectors(state, msg_id),
         Some(other) => Some(error_response(
             msg_id,
             &format!("unknown message type: {other}"),
@@ -522,6 +528,89 @@ fn handle_vr_scene_move(
 
     state.vr_state.scene.set_transform(surface_id, transform);
     Some(ok_response(msg_id))
+}
+
+// ── VR Display handlers ───────────────────────────────────
+
+fn handle_vr_display_info(state: &mut EwwmState, msg_id: i64) -> Option<String> {
+    let sexp = state.vr_state.hmd_manager.display_info_sexp();
+    Some(format!(
+        "(:type :response :id {} :status :ok :display {})",
+        msg_id, sexp
+    ))
+}
+
+fn handle_vr_display_set_mode(
+    state: &mut EwwmState,
+    msg_id: i64,
+    value: &Value,
+) -> Option<String> {
+    use crate::vr::drm_lease::VrDisplayMode;
+
+    let mode_str = get_keyword(value, "mode");
+    let mode = match mode_str.as_deref().and_then(VrDisplayMode::from_str) {
+        Some(m) => m,
+        None => return Some(error_response(msg_id, "invalid :mode (use headset, preview, headless, off)")),
+    };
+
+    state.vr_state.hmd_manager.set_display_mode(mode);
+    Some(ok_response(msg_id))
+}
+
+fn handle_vr_display_select_hmd(
+    state: &mut EwwmState,
+    msg_id: i64,
+    value: &Value,
+) -> Option<String> {
+    let connector_id = match get_int(value, "connector-id") {
+        Some(id) => id as u32,
+        None => return Some(error_response(msg_id, "missing :connector-id")),
+    };
+
+    if state.vr_state.hmd_manager.select_hmd(connector_id) {
+        Some(ok_response(msg_id))
+    } else {
+        Some(error_response(msg_id, &format!("connector {} not found or not an HMD", connector_id)))
+    }
+}
+
+fn handle_vr_display_set_refresh_rate(
+    state: &mut EwwmState,
+    msg_id: i64,
+    value: &Value,
+) -> Option<String> {
+    let target = match get_int(value, "rate") {
+        Some(r) if r > 0 => r as u32,
+        _ => return Some(error_response(msg_id, "invalid :rate (must be positive integer)")),
+    };
+
+    let actual = state.vr_state.hmd_manager.set_target_refresh_rate(target);
+    Some(format!(
+        "(:type :response :id {} :status :ok :target {} :actual {})",
+        msg_id, target, actual
+    ))
+}
+
+fn handle_vr_display_auto_detect(state: &mut EwwmState, msg_id: i64) -> Option<String> {
+    let mode = state.vr_state.hmd_manager.auto_detect_mode();
+    Some(format!(
+        "(:type :response :id {} :status :ok :mode :{})",
+        msg_id,
+        mode.as_str()
+    ))
+}
+
+fn handle_vr_display_list_connectors(state: &mut EwwmState, msg_id: i64) -> Option<String> {
+    let mut list = String::from("(");
+    for conn in &state.vr_state.hmd_manager.connectors {
+        list.push_str(&conn.to_sexp());
+    }
+    list.push(')');
+
+    Some(format!(
+        "(:type :response :id {} :status :ok :connectors {})",
+        msg_id, list
+    ))
 }
 
 // ── Helpers ────────────────────────────────────────────────

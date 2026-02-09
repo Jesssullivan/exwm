@@ -5,6 +5,7 @@
 
 use tracing::info;
 
+use super::drm_lease::HmdManager;
 use super::scene::VrScene;
 
 /// Reference space type selection (stub).
@@ -19,6 +20,7 @@ pub enum ReferenceSpaceType {
 pub struct VrState {
     pub enabled: bool,
     pub scene: VrScene,
+    pub hmd_manager: HmdManager,
 }
 
 impl Default for VrState {
@@ -26,6 +28,7 @@ impl Default for VrState {
         Self {
             enabled: false,
             scene: VrScene::new(),
+            hmd_manager: HmdManager::new(),
         }
     }
 }

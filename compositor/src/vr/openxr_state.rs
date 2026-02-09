@@ -15,6 +15,7 @@ use std::collections::HashSet;
 use std::time::{Duration, Instant};
 use tracing::{debug, error, info, warn};
 
+use super::drm_lease::HmdManager;
 use super::frame_timing::FrameTiming;
 use super::scene::VrScene;
 
@@ -94,6 +95,7 @@ pub struct VrState {
     pub active_reference_space: ReferenceSpaceType,
     pub frame_timing: FrameTiming,
     pub scene: VrScene,
+    pub hmd_manager: HmdManager,
 
     // OpenXR objects (Option because they're created incrementally)
     entry: Option<xr::Entry>,
@@ -122,6 +124,7 @@ impl VrState {
             active_reference_space: ReferenceSpaceType::Local,
             frame_timing: FrameTiming::default(),
             scene: VrScene::new(),
+            hmd_manager: HmdManager::new(),
             entry: None,
             instance: None,
             system_id: None,
