@@ -198,20 +198,34 @@
   "Mode-line shows gaze target when tracking."
   (let ((ewwm-vr-gaze-mode-line t)
         (ewwm-vr-gaze-tracking-p t)
-        (ewwm-vr-gaze-surface 42))
-    (should (string= (ewwm-vr-eye-mode-line-string) " [Gaze:42]"))))
+        (ewwm-vr-gaze-surface 42)
+        (ewwm-vr-eye--in-saccade nil)
+        (ewwm-vr-eye--cooldown-remaining 0)
+        (ewwm-vr-eye--in-reading nil)
+        (ewwm-vr-eye-show-dwell-progress t)
+        (ewwm-vr-eye--dwell-surface nil)
+        (ewwm-vr-eye--dwell-progress 0.0))
+    (should (string= (ewwm-vr-eye-mode-line-string) " [Eye:42]"))))
 
 (ert-deftest ewwm-vr-eye/mode-line-no-target ()
   "Mode-line shows --- when no target."
   (let ((ewwm-vr-gaze-mode-line t)
         (ewwm-vr-gaze-tracking-p t)
-        (ewwm-vr-gaze-surface nil))
-    (should (string= (ewwm-vr-eye-mode-line-string) " [Gaze:---]"))))
+        (ewwm-vr-gaze-surface nil)
+        (ewwm-vr-eye--in-saccade nil)
+        (ewwm-vr-eye--cooldown-remaining 0)
+        (ewwm-vr-eye--in-reading nil)
+        (ewwm-vr-eye-show-dwell-progress t)
+        (ewwm-vr-eye--dwell-surface nil)
+        (ewwm-vr-eye--dwell-progress 0.0))
+    (should (string= (ewwm-vr-eye-mode-line-string) " [Eye:---]"))))
 
 (ert-deftest ewwm-vr-eye/mode-line-not-tracking ()
   "Mode-line nil when not tracking."
   (let ((ewwm-vr-gaze-mode-line t)
-        (ewwm-vr-gaze-tracking-p nil))
+        (ewwm-vr-gaze-tracking-p nil)
+        (ewwm-vr-eye--in-saccade nil)
+        (ewwm-vr-eye--cooldown-remaining 0))
     (should-not (ewwm-vr-eye-mode-line-string))))
 
 ;; ── Init / teardown ─────────────────────────────────────────

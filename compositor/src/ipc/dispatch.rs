@@ -78,6 +78,14 @@ pub fn handle_message(state: &mut EwwmState, client_id: u64, raw: &str) -> Optio
         Some("gaze-set-smoothing") => handle_gaze_set_smoothing(state, msg_id, &value),
         Some("gaze-simulate") => handle_gaze_simulate(state, msg_id, &value),
         Some("gaze-health") => handle_gaze_health(state, msg_id),
+        // Gaze focus (Week 12)
+        Some("gaze-focus-config") => handle_gaze_focus_config(state, msg_id),
+        Some("gaze-focus-status") => handle_gaze_focus_status(state, msg_id),
+        Some("gaze-focus-set-policy") => handle_gaze_focus_set_policy(state, msg_id, &value),
+        Some("gaze-focus-set-dwell") => handle_gaze_focus_set_dwell(state, msg_id, &value),
+        Some("gaze-focus-set-cooldown") => handle_gaze_focus_set_cooldown(state, msg_id, &value),
+        Some("gaze-focus-analytics") => handle_gaze_focus_analytics(state, msg_id),
+        Some("gaze-focus-back") => handle_gaze_focus_back(state, msg_id),
         Some(other) => Some(error_response(
             msg_id,
             &format!("unknown message type: {other}"),
@@ -930,6 +938,96 @@ fn handle_gaze_health(state: &mut EwwmState, msg_id: i64) -> Option<String> {
         h.calibration_error_deg.map(|e| format!("{:.1}", e)).unwrap_or_else(|| "nil".to_string()),
         h.consecutive_lost_frames,
     ))
+}
+
+// ── Gaze focus handlers (Week 12) ──────────────────────────
+
+fn handle_gaze_focus_config(state: &mut EwwmState, msg_id: i64) -> Option<String> {
+    let config = state.vr_state.gaze_focus.config_sexp();
+    Some(format!(
+        "(:type :response :id {} :status :ok :config {})",
+        msg_id, config
+    ))
+}
+
+fn handle_gaze_focus_status(state: &mut EwwmState, msg_id: i64) -> Option<String> {
+    let status = state.vr_state.gaze_focus.status_sexp();
+    Some(format!(
+        "(:type :response :id {} :status :ok :focus {})",
+        msg_id, status
+    ))
+}
+
+fn handle_gaze_focus_set_policy(
+    state: &mut EwwmState,
+    msg_id: i64,
+    value: &Value,
+) -> Option<String> {
+    use crate::vr::gaze_focus::FocusPolicy;
+
+    let policy_str = get_keyword(value, "policy").unwrap_or_default();
+    match FocusPolicy::from_str(&policy_str) {
+        Some(policy) => {
+            state.vr_state.gaze_focus.set_policy(policy);
+            Some(ok_response(msg_id))
+        }
+        None => Some(error_response(
+            msg_id,
+            &format!("invalid :policy (use gaze-only, gaze-primary, gaze-assist, disabled): {policy_str}"),
+        )),
+    }
+}
+
+fn handle_gaze_focus_set_dwell(
+    state: &mut EwwmState,
+    msg_id: i64,
+    value: &Value,
+) -> Option<String> {
+    let threshold = match get_int(value, "threshold-ms") {
+        Some(t) if t >= 50 && t <= 2000 => t as f64,
+        _ => return Some(error_response(msg_id, "invalid :threshold-ms (50-2000)")),
+    };
+
+    state.vr_state.gaze_focus.set_dwell_threshold(threshold);
+    Some(format!(
+        "(:type :response :id {} :status :ok :threshold-ms {:.0})",
+        msg_id, threshold
+    ))
+}
+
+fn handle_gaze_focus_set_cooldown(
+    state: &mut EwwmState,
+    msg_id: i64,
+    value: &Value,
+) -> Option<String> {
+    let cooldown = match get_int(value, "cooldown-ms") {
+        Some(c) if c >= 0 && c <= 5000 => c as f64,
+        _ => return Some(error_response(msg_id, "invalid :cooldown-ms (0-5000)")),
+    };
+
+    state.vr_state.gaze_focus.set_cooldown(cooldown);
+    Some(format!(
+        "(:type :response :id {} :status :ok :cooldown-ms {:.0})",
+        msg_id, cooldown
+    ))
+}
+
+fn handle_gaze_focus_analytics(state: &mut EwwmState, msg_id: i64) -> Option<String> {
+    let analytics = state.vr_state.gaze_focus.analytics.status_sexp();
+    Some(format!(
+        "(:type :response :id {} :status :ok :analytics {})",
+        msg_id, analytics
+    ))
+}
+
+fn handle_gaze_focus_back(state: &mut EwwmState, msg_id: i64) -> Option<String> {
+    match state.vr_state.gaze_focus.focus_back() {
+        Some(surface_id) => Some(format!(
+            "(:type :response :id {} :status :ok :surface-id {})",
+            msg_id, surface_id
+        )),
+        None => Some(error_response(msg_id, "no focus history available")),
+    }
 }
 
 // ── Helpers ────────────────────────────────────────────────

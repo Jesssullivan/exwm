@@ -32,3 +32,4 @@ pub mod scene;
 pub mod drm_lease;
 pub mod vr_interaction;
 pub mod eye_tracking;
+pub mod gaze_focus;

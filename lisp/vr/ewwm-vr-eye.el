@@ -10,6 +10,7 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'ring)
 (require 'ewwm-core)
 
 (declare-function ewwm-ipc-send "ewwm-ipc")
@@ -84,6 +85,82 @@ Samples below this threshold are ignored."
   :type 'boolean
   :group 'ewwm-vr-eye)
 
+(defcustom ewwm-vr-eye-enable t
+  "Master switch for gaze-based focus."
+  :type 'boolean
+  :group 'ewwm-vr-eye)
+
+(defcustom ewwm-vr-eye-focus-policy 'gaze-primary
+  "Gaze focus policy.
+`gaze-only': gaze dwell is the sole focus method.
+`gaze-primary': gaze dwell switches focus, keyboard/mouse also work.
+`gaze-assist': gaze highlights target, requires confirmation to focus.
+`disabled': traditional focus only, gaze has no effect."
+  :type '(choice (const gaze-only)
+                 (const gaze-primary)
+                 (const gaze-assist)
+                 (const disabled))
+  :group 'ewwm-vr-eye)
+
+(defcustom ewwm-vr-eye-dwell-ms 200
+  "Milliseconds of stable gaze before focus switch."
+  :type 'integer
+  :group 'ewwm-vr-eye)
+
+(defcustom ewwm-vr-eye-cooldown-ms 500
+  "Minimum time between gaze-triggered focus changes."
+  :type 'integer
+  :group 'ewwm-vr-eye)
+
+(defcustom ewwm-vr-eye-saccade-threshold 300
+  "Angular velocity in deg/s above which gaze is classified as saccade."
+  :type 'integer
+  :group 'ewwm-vr-eye)
+
+(defcustom ewwm-vr-eye-max-jitter-px 50
+  "Maximum gaze jitter in pixels during dwell."
+  :type 'integer
+  :group 'ewwm-vr-eye)
+
+(defcustom ewwm-vr-eye-reading-detection t
+  "Detect reading patterns to prevent false focus changes."
+  :type 'boolean
+  :group 'ewwm-vr-eye)
+
+(defcustom ewwm-vr-eye-hysteresis t
+  "Automatically increase dwell threshold for ping-pong patterns."
+  :type 'boolean
+  :group 'ewwm-vr-eye)
+
+(defcustom ewwm-vr-eye-show-dwell-progress t
+  "Show dwell progress in mode-line and VR overlay."
+  :type 'boolean
+  :group 'ewwm-vr-eye)
+
+(defcustom ewwm-vr-eye-focus-exceptions nil
+  "Alist of (PREDICATE . POLICY) for per-surface focus overrides.
+Each PREDICATE is a function taking a buffer, returning non-nil if matched.
+POLICY overrides `ewwm-vr-eye-focus-policy' for matching surfaces."
+  :type '(alist :key-type function :value-type symbol)
+  :group 'ewwm-vr-eye)
+
+(defcustom ewwm-vr-eye-cross-workspace-focus nil
+  "Allow gaze to focus surfaces on other workspaces."
+  :type 'boolean
+  :group 'ewwm-vr-eye)
+
+(defcustom ewwm-vr-eye-fallback 'head-gaze
+  "Fallback when eye tracking unavailable.
+`head-gaze': use head-gaze ray from VR interaction.
+`disabled': no gaze focus without eye tracking."
+  :type '(choice (const head-gaze) (const disabled))
+  :group 'ewwm-vr-eye)
+
+(defcustom ewwm-vr-eye-analytics-enable t
+  "Log gaze focus analytics."
+  :type 'boolean
+  :group 'ewwm-vr-eye)
+
 ;; ── Internal state ───────────────────────────────────────────
 
 (defvar ewwm-vr-gaze-surface nil
@@ -110,6 +187,30 @@ Samples below this threshold are ignored."
 (defvar ewwm-vr-eye--gaze-position nil
   "Current gaze position as (X . Y) in screen coordinates.")
 
+(defvar ewwm-vr-eye--dwell-surface nil
+  "Surface ID currently being dwelled on, or nil.")
+
+(defvar ewwm-vr-eye--dwell-progress 0.0
+  "Current dwell progress as fraction 0.0 to 1.0.")
+
+(defvar ewwm-vr-eye--cooldown-remaining 0
+  "Remaining cooldown time in ms, or 0.")
+
+(defvar ewwm-vr-eye--in-saccade nil
+  "Non-nil when saccade is detected.")
+
+(defvar ewwm-vr-eye--in-reading nil
+  "Non-nil when reading mode is active.")
+
+(defvar ewwm-vr-eye--focus-ring (make-ring 10)
+  "Ring buffer of last 10 gaze-focused surface IDs.")
+
+(defvar ewwm-last-focus-method nil
+  "How focus was last changed: `gaze', `keyboard', `mouse', `controller'.")
+
+(defvar ewwm-vr-eye--analytics nil
+  "Plist of gaze focus analytics from compositor.")
+
 ;; ── Hooks ────────────────────────────────────────────────────
 
 (defvar ewwm-vr-gaze-target-change-hook nil
@@ -127,6 +228,14 @@ Functions receive (SOURCE DURATION-MS).")
 (defvar ewwm-vr-gaze-calibration-drift-hook nil
   "Hook run when calibration drift is detected.
 Functions receive (ERROR-DEG).")
+
+(defvar ewwm-vr-gaze-dwell-hook nil
+  "Hook run on gaze dwell confirmed.
+Functions receive (SURFACE-ID DWELL-MS X Y).")
+
+(defvar ewwm-vr-gaze-focus-hook nil
+  "Hook run after gaze-triggered focus switch.
+Functions receive (SURFACE-ID METHOD).")
 
 ;; ── IPC event handlers ──────────────────────────────────────
 
@@ -175,6 +284,93 @@ Functions receive (ERROR-DEG).")
   (let ((err (plist-get msg :error-deg)))
     (run-hook-with-args 'ewwm-vr-gaze-calibration-drift-hook err)
     (message "ewwm-vr-eye: calibration drift detected (%.1f deg)" (or err 0))))
+
+(defun ewwm-vr-eye--on-gaze-dwell (msg)
+  "Handle :gaze-dwell event MSG."
+  (let ((sid (plist-get msg :surface-id))
+        (dur (plist-get msg :duration-ms))
+        (x (plist-get msg :x))
+        (y (plist-get msg :y)))
+    (setq ewwm-vr-eye--dwell-surface sid)
+    (run-hook-with-args 'ewwm-vr-gaze-dwell-hook sid dur x y)
+    ;; Process focus request based on policy
+    (ewwm-vr-eye--process-focus-request sid dur)))
+
+(defun ewwm-vr-eye--on-gaze-dwell-progress (msg)
+  "Handle :gaze-dwell-progress event MSG."
+  (let ((elapsed (plist-get msg :elapsed-ms))
+        (threshold (plist-get msg :threshold-ms)))
+    (setq ewwm-vr-eye--dwell-progress
+          (if (and elapsed threshold (> threshold 0))
+              (min 1.0 (/ (float elapsed) threshold))
+            0.0))
+    (setq ewwm-vr-eye--dwell-surface (plist-get msg :surface-id))))
+
+(defun ewwm-vr-eye--on-gaze-focus-request (msg)
+  "Handle :gaze-focus-request event MSG from compositor."
+  (let ((sid (plist-get msg :surface-id))
+        (dwell-ms (plist-get msg :dwell-ms)))
+    (ewwm-vr-eye--process-focus-request sid dwell-ms)))
+
+(defun ewwm-vr-eye--on-gaze-cooldown (msg)
+  "Handle :gaze-cooldown event MSG."
+  (setq ewwm-vr-eye--cooldown-remaining
+        (or (plist-get msg :remaining-ms) 0)))
+
+(defun ewwm-vr-eye--on-gaze-saccade-state (msg)
+  "Handle :gaze-saccade-state event MSG."
+  (setq ewwm-vr-eye--in-saccade (plist-get msg :active)))
+
+(defun ewwm-vr-eye--on-gaze-reading-mode (msg)
+  "Handle :gaze-reading-mode event MSG."
+  (setq ewwm-vr-eye--in-reading (plist-get msg :active)))
+
+;; ── Focus processing ────────────────────────────────────────
+
+(defun ewwm-vr-eye--process-focus-request (surface-id _dwell-ms)
+  "Process a gaze focus request for SURFACE-ID after _DWELL-MS.
+Checks policy, exceptions, and workspace before switching focus."
+  (when (and ewwm-vr-eye-enable
+             (ewwm-vr-eye--should-focus-p surface-id))
+    (let ((buf (ewwm--get-buffer surface-id)))
+      (when (and buf (buffer-live-p buf))
+        ;; Record in focus ring
+        (ring-insert ewwm-vr-eye--focus-ring surface-id)
+        ;; Switch focus
+        (setq ewwm-last-focus-method 'gaze)
+        (unless noninteractive
+          (switch-to-buffer buf))
+        ;; Notify compositor
+        (when (and (fboundp 'ewwm-ipc-connected-p)
+                   (ewwm-ipc-connected-p))
+          (ewwm-ipc-send
+           `(:type :surface-focus :surface-id ,surface-id)))
+        (run-hook-with-args 'ewwm-vr-gaze-focus-hook surface-id 'gaze)))))
+
+(defun ewwm-vr-eye--should-focus-p (surface-id)
+  "Return non-nil if gaze focus should switch to SURFACE-ID.
+Checks policy, per-surface exceptions, and workspace constraints."
+  (let ((policy ewwm-vr-eye-focus-policy))
+    ;; Check per-surface exceptions
+    (when-let ((buf (ewwm--get-buffer surface-id)))
+      (dolist (exc ewwm-vr-eye-focus-exceptions)
+        (when (and (functionp (car exc))
+                   (with-current-buffer buf (funcall (car exc) buf)))
+          (setq policy (cdr exc)))))
+    (cond
+     ;; Disabled policy rejects focus
+     ((eq policy 'disabled) nil)
+     ;; Gaze-assist requires confirmation (not auto-focus)
+     ((eq policy 'gaze-assist) nil)
+     ;; Workspace check
+     ((and (not ewwm-vr-eye-cross-workspace-focus)
+           (boundp 'ewwm-workspace-current-index)
+           (when-let ((buf (ewwm--get-buffer surface-id)))
+             (not (= (buffer-local-value 'ewwm-workspace buf)
+                     ewwm-workspace-current-index))))
+      nil)
+     ;; All checks passed
+     (t t))))
 
 ;; ── Interactive commands ────────────────────────────────────
 
@@ -310,14 +506,122 @@ MODE is nil (off), `mouse', `scripted', `random-walk', or `pattern'."
         (eq (buffer-local-value 'ewwm-surface-id buf)
             ewwm-vr-gaze-surface)))))
 
+(defun ewwm-vr-eye-focus-back ()
+  "Return to the previously gaze-focused surface."
+  (interactive)
+  (if (ring-empty-p ewwm-vr-eye--focus-ring)
+      (message "ewwm-vr-eye: no focus history")
+    (let ((prev (ring-ref ewwm-vr-eye--focus-ring 0)))
+      (when-let ((buf (ewwm--get-buffer prev)))
+        (when (buffer-live-p buf)
+          (setq ewwm-last-focus-method 'gaze)
+          (unless noninteractive
+            (switch-to-buffer buf))
+          (message "ewwm-vr-eye: focused back to %d" prev))))))
+
+(defun ewwm-vr-eye-set-focus-policy (policy)
+  "Set the gaze focus POLICY.
+POLICY is a symbol: `gaze-only', `gaze-primary', `gaze-assist', or `disabled'."
+  (interactive
+   (list (intern (completing-read "Focus policy: "
+                                  '("gaze-only" "gaze-primary" "gaze-assist" "disabled")
+                                  nil t))))
+  (unless (memq policy '(gaze-only gaze-primary gaze-assist disabled))
+    (error "Invalid focus policy: %s" policy))
+  (setq ewwm-vr-eye-focus-policy policy)
+  (when (and (fboundp 'ewwm-ipc-connected-p) (ewwm-ipc-connected-p))
+    (ewwm-ipc-send
+     `(:type :gaze-focus-set-policy :policy ,(symbol-name policy))))
+  (message "ewwm-vr-eye: focus policy set to %s" policy))
+
+(defun ewwm-vr-eye-set-dwell-threshold (ms)
+  "Set the dwell threshold to MS milliseconds."
+  (interactive "nDwell threshold (ms): ")
+  (setq ewwm-vr-eye-dwell-ms (max 50 (min 2000 ms)))
+  (when (and (fboundp 'ewwm-ipc-connected-p) (ewwm-ipc-connected-p))
+    (ewwm-ipc-send
+     `(:type :gaze-focus-set-dwell :threshold-ms ,ewwm-vr-eye-dwell-ms)))
+  (message "ewwm-vr-eye: dwell threshold set to %dms" ewwm-vr-eye-dwell-ms))
+
+(defun ewwm-vr-eye-analytics ()
+  "Display gaze focus analytics dashboard."
+  (interactive)
+  (if (not (fboundp 'ewwm-ipc-send-sync))
+      (message "ewwm-vr-eye: IPC not available")
+    (condition-case err
+        (let ((resp (ewwm-ipc-send-sync '(:type :gaze-focus-analytics))))
+          (if (eq (plist-get resp :status) :ok)
+              (let ((a (plist-get resp :analytics))
+                    (buf (get-buffer-create "*ewwm-gaze-analytics*")))
+                (setq ewwm-vr-eye--analytics a)
+                (with-current-buffer buf
+                  (let ((inhibit-read-only t))
+                    (erase-buffer)
+                    (insert "EWWM Gaze Focus Analytics\n")
+                    (insert "=========================\n\n")
+                    (insert (format "  Focus switches:       %s\n"
+                                    (or (plist-get a :switches) 0)))
+                    (insert (format "  False positives:      %s\n"
+                                    (or (plist-get a :false-positives) 0)))
+                    (insert (format "  Saccade suppressions: %s\n"
+                                    (or (plist-get a :saccade-suppressions) 0)))
+                    (insert (format "  Cooldown blocks:      %s\n"
+                                    (or (plist-get a :cooldown-blocks) 0)))
+                    (insert (format "  Reading suppressions: %s\n"
+                                    (or (plist-get a :reading-suppressions) 0)))
+                    (insert (format "  Switches/min:         %.1f\n"
+                                    (or (plist-get a :switches-per-min) 0.0)))
+                    (insert "\n[Press q to close]"))
+                  (special-mode))
+                (display-buffer buf))
+            (message "ewwm-vr-eye: analytics query failed")))
+      (error (message "ewwm-vr-eye: %s" (error-message-string err))))))
+
+(defun ewwm-vr-eye-focus-config ()
+  "Display current gaze focus configuration."
+  (interactive)
+  (message "ewwm-vr-eye: policy=%s dwell=%dms cooldown=%dms saccade=%d jitter=%dpx read=%s hyst=%s"
+           ewwm-vr-eye-focus-policy
+           ewwm-vr-eye-dwell-ms
+           ewwm-vr-eye-cooldown-ms
+           ewwm-vr-eye-saccade-threshold
+           ewwm-vr-eye-max-jitter-px
+           (if ewwm-vr-eye-reading-detection "on" "off")
+           (if ewwm-vr-eye-hysteresis "on" "off")))
+
 ;; ── Mode-line ────────────────────────────────────────────────
 
 (defun ewwm-vr-eye-mode-line-string ()
-  "Return a mode-line string for gaze state."
-  (when (and ewwm-vr-gaze-mode-line ewwm-vr-gaze-tracking-p)
-    (if ewwm-vr-gaze-surface
-        (format " [Gaze:%d]" ewwm-vr-gaze-surface)
-      " [Gaze:---]")))
+  "Return a mode-line string for gaze focus state."
+  (when ewwm-vr-gaze-mode-line
+    (cond
+     ;; Saccade in progress
+     (ewwm-vr-eye--in-saccade " [Eye:>>>]")
+     ;; Cooldown active
+     ((> ewwm-vr-eye--cooldown-remaining 0)
+      (format " [Eye:COOL %dms]" ewwm-vr-eye--cooldown-remaining))
+     ;; Tracking lost
+     ((not ewwm-vr-gaze-tracking-p) nil)
+     ;; Reading mode
+     (ewwm-vr-eye--in-reading
+      (format " [Eye:READ %s]"
+              (if ewwm-vr-gaze-surface
+                  (number-to-string ewwm-vr-gaze-surface)
+                "---")))
+     ;; Dwell in progress
+     ((and ewwm-vr-eye-show-dwell-progress
+           ewwm-vr-eye--dwell-surface
+           (> ewwm-vr-eye--dwell-progress 0.0))
+      (let* ((filled (round (* ewwm-vr-eye--dwell-progress 5)))
+             (empty (- 5 filled))
+             (bar (concat (make-string filled ?=)
+                          (make-string empty ?_))))
+        (format " [Eye:%s %d]" bar ewwm-vr-eye--dwell-surface)))
+     ;; Normal tracking
+     (ewwm-vr-gaze-surface
+      (format " [Eye:%d]" ewwm-vr-gaze-surface))
+     ;; Tracking but no target
+     (ewwm-vr-gaze-tracking-p " [Eye:---]"))))
 
 ;; ── Event registration ──────────────────────────────────────
 
@@ -330,7 +634,13 @@ MODE is nil (off), `mouse', `scripted', `random-walk', or `pattern'."
              (:gaze-fixation         . ewwm-vr-eye--on-gaze-fixation)
              (:gaze-saccade          . ewwm-vr-eye--on-gaze-saccade)
              (:gaze-tracking-lost    . ewwm-vr-eye--on-gaze-tracking-lost)
-             (:gaze-calibration-drift . ewwm-vr-eye--on-gaze-calibration-drift))))
+             (:gaze-calibration-drift . ewwm-vr-eye--on-gaze-calibration-drift)
+             (:gaze-dwell            . ewwm-vr-eye--on-gaze-dwell)
+             (:gaze-dwell-progress   . ewwm-vr-eye--on-gaze-dwell-progress)
+             (:gaze-focus-request    . ewwm-vr-eye--on-gaze-focus-request)
+             (:gaze-cooldown         . ewwm-vr-eye--on-gaze-cooldown)
+             (:gaze-saccade-state    . ewwm-vr-eye--on-gaze-saccade-state)
+             (:gaze-reading-mode     . ewwm-vr-eye--on-gaze-reading-mode))))
       (dolist (handler handlers)
         (unless (assq (car handler) ewwm-ipc--event-handlers)
           (push handler ewwm-ipc--event-handlers))))))
@@ -345,6 +655,11 @@ MODE is nil (off), `mouse', `scripted', `random-walk', or `pattern'."
             (define-key map (kbd "C-c e c") #'ewwm-vr-calibrate-eyes)
             (define-key map (kbd "C-c e h") #'ewwm-vr-gaze-health)
             (define-key map (kbd "C-c e s") #'ewwm-vr-gaze-status)
+            (define-key map (kbd "C-c e b") #'ewwm-vr-eye-focus-back)
+            (define-key map (kbd "C-c e p") #'ewwm-vr-eye-set-focus-policy)
+            (define-key map (kbd "C-c e d") #'ewwm-vr-eye-set-dwell-threshold)
+            (define-key map (kbd "C-c e a") #'ewwm-vr-eye-analytics)
+            (define-key map (kbd "C-c e C") #'ewwm-vr-eye-focus-config)
             map))
 
 ;; ── Init / teardown ─────────────────────────────────────────
@@ -363,7 +678,14 @@ MODE is nil (off), `mouse', `scripted', `random-walk', or `pattern'."
         ewwm-vr-gaze-tracking-p nil
         ewwm-vr-gaze-calibrated-p nil
         ewwm-vr-eye--tracking-active nil
-        ewwm-vr-eye--gaze-position nil))
+        ewwm-vr-eye--gaze-position nil
+        ewwm-vr-eye--dwell-surface nil
+        ewwm-vr-eye--dwell-progress 0.0
+        ewwm-vr-eye--cooldown-remaining 0
+        ewwm-vr-eye--in-saccade nil
+        ewwm-vr-eye--in-reading nil
+        ewwm-last-focus-method nil
+        ewwm-vr-eye--analytics nil))
 
 (provide 'ewwm-vr-eye)
 ;;; ewwm-vr-eye.el ends here
