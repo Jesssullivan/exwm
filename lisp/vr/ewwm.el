@@ -18,6 +18,7 @@
 (require 'ewwm-manage)
 (require 'ewwm-floating)
 (require 'ewwm-launch)
+(require 'ewwm-vr)
 
 ;; ── Customization ────────────────────────────────────────────
 
@@ -138,6 +139,7 @@ When SKIP-COMPOSITOR is non-nil, skip starting the compositor
   ;; Step 3: Initialize modules
   (ewwm-workspace--init)
   (ewwm-input--setup-defaults)
+  (ewwm-vr-init)
   ;; Step 4: Wire event handlers
   (ewwm--wire-event-handlers)
   ;; Step 5: Connect IPC
@@ -190,6 +192,8 @@ When SKIP-COMPOSITOR is non-nil, skip starting the compositor
   "Shut down ewwm: disconnect IPC, kill compositor, clean up."
   (interactive)
   (ewwm--teardown-focus-sync)
+  ;; Clean up VR
+  (ewwm-vr-teardown)
   ;; Disconnect IPC
   (ewwm-ipc-disconnect)
   ;; Kill all launched apps

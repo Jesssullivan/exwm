@@ -8,6 +8,7 @@ mod input;
 pub mod ipc;
 mod render;
 mod state;
+pub mod vr;
 
 use clap::Parser;
 use tracing::info;

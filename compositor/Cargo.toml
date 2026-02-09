@@ -10,6 +10,10 @@ license = "GPL-3.0-or-later"
 name = "ewwm-compositor"
 path = "src/main.rs"
 
+[features]
+default = []
+vr = ["openxrs"]
+
 [dependencies]
 smithay = { version = "0.7", default-features = false, features = [
     "backend_drm",
@@ -31,6 +35,9 @@ clap = { version = "4", features = ["derive"] }
 anyhow = "1"
 lexpr = "0.2"
 libc = "0.2"
+
+# VR: OpenXR runtime integration (behind "vr" feature flag)
+openxrs = { version = "0.19", optional = true }
 
 [dev-dependencies]
 wayland-client = "0.31"

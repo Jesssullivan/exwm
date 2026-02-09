@@ -38,6 +38,7 @@ use std::{
 use tracing::info;
 
 use crate::ipc::IpcServer;
+use crate::vr::VrState;
 
 /// Monotonically increasing surface ID generator.
 static NEXT_SURFACE_ID: AtomicU64 = AtomicU64::new(1);
@@ -149,6 +150,9 @@ pub struct EwwmState {
     pub ipc_server: IpcServer,
     pub grabbed_keys: HashSet<String>,
 
+    // VR subsystem
+    pub vr_state: VrState,
+
     // Shutdown flag
     pub running: bool,
 }
@@ -204,6 +208,7 @@ impl EwwmState {
             usable_area: UsableArea::default(),
             ipc_server: IpcServer::new(ipc_socket_path),
             grabbed_keys: HashSet::new(),
+            vr_state: VrState::new(),
             running: true,
         }
     }

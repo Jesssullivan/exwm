@@ -45,6 +45,9 @@ pub fn handle_message(state: &mut EwwmState, client_id: u64, raw: &str) -> Optio
         Some("key-grab") => handle_key_grab(state, msg_id, &value),
         Some("key-ungrab") => handle_key_ungrab(state, msg_id, &value),
         Some("vr-status") => handle_vr_status(state, msg_id),
+        Some("vr-set-reference-space") => handle_vr_set_reference_space(state, msg_id, &value),
+        Some("vr-restart") => handle_vr_restart(state, msg_id),
+        Some("vr-get-frame-timing") => handle_vr_get_frame_timing(state, msg_id),
         Some(other) => Some(error_response(
             msg_id,
             &format!("unknown message type: {other}"),
@@ -76,9 +79,10 @@ fn handle_hello(
         client.authenticated = true;
     }
 
+    let vr_flag = if state.vr_state.enabled { "t" } else { "nil" };
     Some(format!(
-        "(:type :hello :id {} :version 1 :server \"ewwm-compositor\" :features (:xwayland t :vr nil))",
-        msg_id
+        "(:type :hello :id {} :version 1 :server \"ewwm-compositor\" :features (:xwayland t :vr {}))",
+        msg_id, vr_flag
     ))
 }
 
@@ -333,10 +337,51 @@ fn handle_key_ungrab(state: &mut EwwmState, msg_id: i64, value: &Value) -> Optio
     Some(ok_response(msg_id))
 }
 
-fn handle_vr_status(_state: &mut EwwmState, msg_id: i64) -> Option<String> {
+fn handle_vr_status(state: &mut EwwmState, msg_id: i64) -> Option<String> {
+    let session = state.vr_state.session_state_str();
+    let hmd = state.vr_state.hmd_name();
+    let headless = if state.vr_state.is_headless() { "t" } else { "nil" };
+    let frame_stats = state.vr_state.frame_stats_sexp();
     Some(format!(
-        "(:type :response :id {} :status :ok :session :idle :runtime \"none\")",
-        msg_id
+        "(:type :response :id {} :status :ok :session :{} :hmd \"{}\" :headless {} :frame-stats {})",
+        msg_id, session, escape_string(hmd), headless, frame_stats
+    ))
+}
+
+fn handle_vr_set_reference_space(
+    state: &mut EwwmState,
+    msg_id: i64,
+    value: &Value,
+) -> Option<String> {
+    let space_type = get_keyword(value, "space-type");
+    match space_type.as_deref() {
+        Some("local") => {
+            state.vr_state.set_reference_space(crate::vr::ReferenceSpaceType::Local);
+            Some(ok_response(msg_id))
+        }
+        Some("stage") => {
+            state.vr_state.set_reference_space(crate::vr::ReferenceSpaceType::Stage);
+            Some(ok_response(msg_id))
+        }
+        Some("view") => {
+            state.vr_state.set_reference_space(crate::vr::ReferenceSpaceType::View);
+            Some(ok_response(msg_id))
+        }
+        _ => Some(error_response(msg_id, "invalid :space-type (use local, stage, or view)")),
+    }
+}
+
+fn handle_vr_restart(state: &mut EwwmState, msg_id: i64) -> Option<String> {
+    state.vr_state.shutdown();
+    // Re-initialize is deferred to the next frame tick
+    Some(ok_response(msg_id))
+}
+
+fn handle_vr_get_frame_timing(state: &mut EwwmState, msg_id: i64) -> Option<String> {
+    let timing = state.vr_state.frame_stats_sexp();
+    Some(format!(
+        "(:type :response :id {} :status :ok :timing {})",
+        msg_id, timing
     ))
 }
 
