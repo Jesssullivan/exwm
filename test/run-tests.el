@@ -1,7 +1,7 @@
 ;;; run-tests.el --- Test runner for EXWM-VR  -*- lexical-binding: t -*-
 
 ;;; Commentary:
-;; Run with: emacs --batch -L .. -l test/run-tests.el
+;; Run with: emacs --batch -L lisp/core -L lisp/vr -L lisp/ext -l test/run-tests.el
 
 ;;; Code:
 
@@ -13,6 +13,9 @@
                       (file-name-directory
                        (or load-file-name buffer-file-name))))))
   (add-to-list 'load-path project-root)
+  (add-to-list 'load-path (expand-file-name "lisp/core" project-root))
+  (add-to-list 'load-path (expand-file-name "lisp/vr" project-root))
+  (add-to-list 'load-path (expand-file-name "lisp/ext" project-root))
   (add-to-list 'load-path (expand-file-name "test" project-root)))
 
 ;; Load test files

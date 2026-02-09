@@ -1,0 +1,80 @@
+// EXWM Module Dependency Graph
+// Generated from Week 1 analysis (docs/exwm-analysis.org)
+// Render: dot -Tsvg docs/module-dependencies.dot -o docs/module-dependencies.svg
+
+digraph exwm_modules {
+    rankdir=TB;
+    node [shape=box, style="rounded,filled", fontname="monospace", fontsize=10];
+    edge [fontname="monospace", fontsize=8];
+
+    // Classification colors
+    // Green: Keep as-is (X11 backward compat)
+    // Orange: Transform (extract portable logic, create ewwm-* sibling)
+    // Red: Drop for Wayland (X11-only, no Wayland equivalent)
+
+    // === KEEP ===
+    "exwm-core.el" [fillcolor="#90EE90", label="exwm-core.el\n463 lines\nKEEP"];
+    "exwm.el" [fillcolor="#90EE90", label="exwm.el\n1304 lines\nKEEP"];
+
+    // === TRANSFORM ===
+    "exwm-workspace.el" [fillcolor="#FFD700", label="exwm-workspace.el\n1764 lines\nTRANSFORM → ewwm-workspace.el"];
+    "exwm-input.el" [fillcolor="#FFD700", label="exwm-input.el\n1216 lines\nTRANSFORM → ewwm-input.el"];
+    "exwm-layout.el" [fillcolor="#FFD700", label="exwm-layout.el\n664 lines\nTRANSFORM → ewwm-layout.el"];
+    "exwm-manage.el" [fillcolor="#FFD700", label="exwm-manage.el\n834 lines\nTRANSFORM → ewwm-manage.el"];
+    "exwm-floating.el" [fillcolor="#FFD700", label="exwm-floating.el\n761 lines\nTRANSFORM → ewwm-floating.el"];
+
+    // === DROP ===
+    "exwm-xim.el" [fillcolor="#FF9999", label="exwm-xim.el\n794 lines\nDROP (zwp_text_input_v3)"];
+    "exwm-systemtray.el" [fillcolor="#FF9999", label="exwm-systemtray.el\n702 lines\nDROP (wlr-foreign-toplevel)"];
+    "exwm-randr.el" [fillcolor="#FF9999", label="exwm-randr.el\n340 lines\nDROP (wl_output)"];
+    "exwm-xsettings.el" [fillcolor="#FF9999", label="exwm-xsettings.el\n326 lines\nDROP (X11-only)"];
+    "exwm-background.el" [fillcolor="#FF9999", label="exwm-background.el\n206 lines\nDROP (no root window)"];
+
+    // === Require edges ===
+    // exwm-core.el is required by all others
+    "exwm.el" -> "exwm-core.el" [label="require"];
+    "exwm.el" -> "exwm-workspace.el" [label="require"];
+    "exwm.el" -> "exwm-layout.el" [label="require"];
+    "exwm.el" -> "exwm-floating.el" [label="require"];
+    "exwm.el" -> "exwm-manage.el" [label="require"];
+    "exwm.el" -> "exwm-input.el" [label="require"];
+
+    "exwm-workspace.el" -> "exwm-core.el" [label="require"];
+    "exwm-input.el" -> "exwm-core.el" [label="require"];
+    "exwm-layout.el" -> "exwm-core.el" [label="require"];
+    "exwm-manage.el" -> "exwm-core.el" [label="require"];
+    "exwm-floating.el" -> "exwm-core.el" [label="require"];
+
+    "exwm-randr.el" -> "exwm-core.el" [label="require"];
+    "exwm-randr.el" -> "exwm-workspace.el" [label="require"];
+
+    "exwm-systemtray.el" -> "exwm-core.el" [label="require"];
+    "exwm-systemtray.el" -> "exwm-workspace.el" [label="require"];
+
+    "exwm-xim.el" -> "exwm-core.el" [label="require"];
+    "exwm-xim.el" -> "exwm-input.el" [label="require"];
+
+    "exwm-xsettings.el" -> "exwm-core.el" [label="require"];
+    "exwm-background.el" -> "exwm-core.el" [label="require"];
+
+    // === Shared variable edges (exwm--id-buffer-alist) ===
+    "exwm-workspace.el" -> "exwm-core.el" [label="id-buffer-alist (8 refs)", style=dashed, color=blue];
+    "exwm-manage.el" -> "exwm-core.el" [label="id-buffer-alist (8 refs)", style=dashed, color=blue];
+    "exwm-input.el" -> "exwm-core.el" [label="id-buffer-alist (4 refs)", style=dashed, color=blue];
+    "exwm-layout.el" -> "exwm-core.el" [label="id-buffer-alist (3 refs)", style=dashed, color=blue];
+    "exwm-floating.el" -> "exwm-core.el" [label="id-buffer-alist (2 refs)", style=dashed, color=blue];
+    "exwm.el" -> "exwm-core.el" [label="id-buffer-alist (2 refs)", style=dashed, color=blue];
+
+    // === Subgraphs for visual grouping ===
+    subgraph cluster_core {
+        label="Foundation";
+        style=dashed;
+        "exwm-core.el";
+    }
+
+    subgraph cluster_orchestrator {
+        label="Orchestrator";
+        style=dashed;
+        "exwm.el";
+    }
+}

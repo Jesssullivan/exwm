@@ -4,7 +4,11 @@
 set dotenv-load
 
 project_root := justfile_directory()
-el_files := `find . -maxdepth 1 -name '*.el' -not -name '*-pkg.el' -not -name '*-autoloads.el' | sort`
+core_el := `find lisp/core -name '*.el' -not -name '*-pkg.el' -not -name '*-autoloads.el' 2>/dev/null | sort`
+vr_el := `find lisp/vr -name '*.el' 2>/dev/null | sort`
+ext_el := `find lisp/ext -name '*.el' 2>/dev/null | sort`
+all_el := core_el + " " + vr_el + " " + ext_el
+load_flags := "-L " + project_root + "/lisp/core -L " + project_root + "/lisp/vr -L " + project_root + "/lisp/ext"
 
 # ── build ──────────────────────────────────────────────
 
@@ -12,9 +16,9 @@ el_files := `find . -maxdepth 1 -name '*.el' -not -name '*-pkg.el' -not -name '*
 build:
     @echo "Byte-compiling Elisp..."
     emacs --batch \
-        -L "{{project_root}}" \
+        {{load_flags}} \
         --eval '(setq byte-compile-error-on-warn nil)' \
-        -f batch-byte-compile {{el_files}}
+        -f batch-byte-compile {{all_el}}
     @echo "Done."
 
 [group('build')]
@@ -31,7 +35,7 @@ build-all: build build-compositor
 test:
     @echo "Running ERT tests..."
     emacs --batch \
-        -L "{{project_root}}" \
+        {{load_flags}} \
         -l "{{project_root}}/test/run-tests.el"
 
 [group('test')]
@@ -43,7 +47,7 @@ test-compositor:
 test-integration:
     @echo "Running integration tests..."
     emacs --batch \
-        -L "{{project_root}}" \
+        {{load_flags}} \
         -l "{{project_root}}/test/run-tests.el" \
         --eval '(ert-run-tests-batch-and-exit "week.*-integration")'
 
@@ -56,9 +60,9 @@ test-all: test test-compositor test-integration
 lint-elisp:
     @echo "Linting Elisp..."
     emacs --batch \
-        -L "{{project_root}}" \
+        {{load_flags}} \
         --eval '(setq byte-compile-error-on-warn t)' \
-        -f batch-byte-compile {{el_files}}
+        -f batch-byte-compile {{all_el}}
 
 [group('lint')]
 lint-rust:
@@ -88,12 +92,14 @@ vr-test:
 [group('dev')]
 dev:
     @echo "Launching Emacs with EXWM-VR load path..."
-    emacs -L "{{project_root}}" --eval '(require (quote exwm))'
+    emacs {{load_flags}} --eval '(require (quote exwm))'
 
 [group('dev')]
 clean:
     @echo "Cleaning build artifacts..."
-    rm -f "{{project_root}}"/*.elc
+    rm -f "{{project_root}}"/lisp/core/*.elc
+    rm -f "{{project_root}}"/lisp/vr/*.elc
+    rm -f "{{project_root}}"/lisp/ext/*.elc
     rm -rf "{{project_root}}/compositor/target"
     @echo "Done."
 

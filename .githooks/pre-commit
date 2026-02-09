@@ -5,11 +5,14 @@ set -euo pipefail
 echo "Running pre-commit checks..."
 
 # (a) Byte-compile modified .el files
-MODIFIED_EL=$(git diff --cached --name-only --diff-filter=ACM | grep '\.el$' | grep -v '\-pkg\.el$' | grep -v '\-autoloads\.el$' || true)
+MODIFIED_EL=$(git diff --cached --name-only --diff-filter=ACM | grep '\.el$' | grep -v '\-pkg\.el$' | grep -v '\-autoloads\.el$' | grep -v '\.dir-locals\.el$' || true)
 if [ -n "$MODIFIED_EL" ]; then
     echo "  Byte-compiling: $MODIFIED_EL"
+    ROOT="$(git rev-parse --show-toplevel)"
     emacs --batch \
-        -L "$(git rev-parse --show-toplevel)" \
+        -L "$ROOT/lisp/core" \
+        -L "$ROOT/lisp/vr" \
+        -L "$ROOT/lisp/ext" \
         --eval '(setq byte-compile-error-on-warn t)' \
         -f batch-byte-compile $MODIFIED_EL
     # Clean up generated .elc files from hook
