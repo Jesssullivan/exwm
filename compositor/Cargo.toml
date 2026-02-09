@@ -1,0 +1,39 @@
+[package]
+name = "ewwm-compositor"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "EXWM-VR Wayland compositor built on Smithay"
+license = "GPL-3.0-or-later"
+
+[[bin]]
+name = "ewwm-compositor"
+path = "src/main.rs"
+
+[dependencies]
+smithay = { version = "0.7", default-features = false, features = [
+    "backend_drm",
+    "backend_libinput",
+    "backend_session_libseat",
+    "backend_winit",
+    "desktop",
+    "renderer_gl",
+    "wayland_frontend",
+    "xwayland",
+] }
+calloop = { version = "0.14", features = ["signals"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+thiserror = "2"
+bitflags = "2"
+xkbcommon = "0.8"
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+
+[dev-dependencies]
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
