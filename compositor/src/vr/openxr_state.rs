@@ -23,8 +23,11 @@ use super::fatigue::FatigueMonitor;
 use super::gaze_focus::GazeFocusManager;
 use super::gaze_scroll::GazeScrollState;
 use super::gaze_zone::ZoneDetector;
+use super::gesture::GestureState;
+use super::hand_tracking::HandTrackingState;
 use super::link_hints::LinkHintState;
 use super::scene::VrScene;
+use super::virtual_keyboard::VirtualKeyboardState;
 use super::vr_interaction::VrInteraction;
 
 /// Reference space type selection.
@@ -112,6 +115,9 @@ pub struct VrState {
     pub fatigue_monitor: FatigueMonitor,
     pub gaze_scroll: GazeScrollState,
     pub link_hints: LinkHintState,
+    pub hand_tracking: HandTrackingState,
+    pub gesture: GestureState,
+    pub virtual_keyboard: VirtualKeyboardState,
 
     // OpenXR objects (Option because they're created incrementally)
     entry: Option<xr::Entry>,
@@ -149,6 +155,9 @@ impl VrState {
             fatigue_monitor: FatigueMonitor::new(),
             gaze_scroll: GazeScrollState::new(),
             link_hints: LinkHintState::new(),
+            hand_tracking: HandTrackingState::new(),
+            gesture: GestureState::new(),
+            virtual_keyboard: VirtualKeyboardState::new(),
             entry: None,
             instance: None,
             system_id: None,

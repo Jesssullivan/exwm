@@ -38,3 +38,6 @@ pub mod fatigue;
 pub mod blink_wink;
 pub mod gaze_scroll;
 pub mod link_hints;
+pub mod hand_tracking;
+pub mod gesture;
+pub mod virtual_keyboard;

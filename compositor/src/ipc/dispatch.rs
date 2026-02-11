@@ -122,6 +122,24 @@ pub fn handle_message(state: &mut EwwmState, client_id: u64, raw: &str) -> Optio
         Some("link-hints-confirm") => handle_link_hints_confirm(state, msg_id),
         Some("link-hints-clear") => handle_link_hints_clear(state, msg_id),
         Some("link-hints-status") => handle_link_hints_status(state, msg_id),
+        // Hand tracking (Week 18)
+        Some("hand-tracking-status") => handle_hand_tracking_status(state, msg_id),
+        Some("hand-tracking-config") => handle_hand_tracking_config(state, msg_id, &value),
+        Some("hand-tracking-joint") => handle_hand_tracking_joint(state, msg_id, &value),
+        Some("hand-tracking-skeleton") => handle_hand_tracking_skeleton(state, msg_id, &value),
+        Some("hand-tracking-distance") => handle_hand_tracking_distance(state, msg_id, &value),
+        // Gesture (Week 18)
+        Some("gesture-status") => handle_gesture_status(state, msg_id),
+        Some("gesture-config") => handle_gesture_config(state, msg_id, &value),
+        Some("gesture-bind") => handle_gesture_bind(state, msg_id, &value),
+        Some("gesture-unbind") => handle_gesture_unbind(state, msg_id, &value),
+        Some("gesture-bindings") => handle_gesture_bindings(state, msg_id),
+        // Virtual keyboard (Week 18)
+        Some("keyboard-show") => handle_keyboard_show(state, msg_id),
+        Some("keyboard-hide") => handle_keyboard_hide(state, msg_id),
+        Some("keyboard-toggle") => handle_keyboard_toggle(state, msg_id),
+        Some("keyboard-layout") => handle_keyboard_layout(state, msg_id, &value),
+        Some("keyboard-status") => handle_keyboard_status(state, msg_id),
         Some(other) => Some(error_response(
             msg_id,
             &format!("unknown message type: {other}"),
@@ -1525,6 +1543,296 @@ fn handle_link_hints_status(state: &mut EwwmState, msg_id: i64) -> Option<String
     ))
 }
 
+// ── Hand tracking handlers (Week 18) ───────────────────────
+
+fn handle_hand_tracking_status(state: &mut EwwmState, msg_id: i64) -> Option<String> {
+    let status = state.vr_state.hand_tracking.status_sexp();
+    Some(format!(
+        "(:type :response :id {} :status :ok :hand-tracking {})",
+        msg_id, status
+    ))
+}
+
+fn handle_hand_tracking_config(
+    state: &mut EwwmState,
+    msg_id: i64,
+    value: &Value,
+) -> Option<String> {
+    if let Some(enabled) = get_bool(value, "enabled") {
+        state.vr_state.hand_tracking.config.enabled = enabled;
+    }
+    if let Some(min_conf) = get_float(value, "min-confidence") {
+        state.vr_state.hand_tracking.config.min_confidence = min_conf as f32;
+    }
+    if let Some(smoothing) = get_float(value, "smoothing") {
+        state.vr_state.hand_tracking.config.smoothing = smoothing as f32;
+    }
+    if let Some(prediction) = get_float(value, "prediction-ms") {
+        state.vr_state.hand_tracking.config.prediction_ms = prediction as f32;
+    }
+
+    let status = state.vr_state.hand_tracking.status_sexp();
+    Some(format!(
+        "(:type :response :id {} :status :ok :hand-tracking {})",
+        msg_id, status
+    ))
+}
+
+fn handle_hand_tracking_joint(
+    state: &mut EwwmState,
+    msg_id: i64,
+    value: &Value,
+) -> Option<String> {
+    let hand_str = match get_string(value, "hand") {
+        Some(h) => h,
+        None => return Some(error_response(msg_id, "missing :hand (left or right)")),
+    };
+    let joint_name = match get_string(value, "joint") {
+        Some(j) => j,
+        None => return Some(error_response(msg_id, "missing :joint")),
+    };
+
+    match state.vr_state.hand_tracking.get_joint(&hand_str, &joint_name) {
+        Some(joint) => {
+            let pos = joint.position;
+            let rot = joint.orientation;
+            Some(format!(
+                "(:type :response :id {} :status :ok :hand :{} :joint \"{}\" :position (:x {:.4} :y {:.4} :z {:.4}) :orientation (:x {:.4} :y {:.4} :z {:.4} :w {:.4}) :radius {:.4})",
+                msg_id, hand_str, escape_string(&joint_name),
+                pos.x, pos.y, pos.z,
+                rot.x, rot.y, rot.z, rot.w,
+                joint.radius,
+            ))
+        }
+        None => Some(error_response(
+            msg_id,
+            &format!("joint not found: {} {}", hand_str, joint_name),
+        )),
+    }
+}
+
+fn handle_hand_tracking_skeleton(
+    state: &mut EwwmState,
+    msg_id: i64,
+    value: &Value,
+) -> Option<String> {
+    let hand_str = match get_string(value, "hand") {
+        Some(h) => h,
+        None => return Some(error_response(msg_id, "missing :hand (left or right)")),
+    };
+
+    match state.vr_state.hand_tracking.get_skeleton(&hand_str) {
+        Some(joints) => {
+            let mut sexp = String::from("(");
+            for joint in &joints {
+                let pos = joint.position;
+                let rot = joint.orientation;
+                sexp.push_str(&format!(
+                    "(:name \"{}\" :position (:x {:.4} :y {:.4} :z {:.4}) :orientation (:x {:.4} :y {:.4} :z {:.4} :w {:.4}) :radius {:.4})",
+                    escape_string(&joint.name),
+                    pos.x, pos.y, pos.z,
+                    rot.x, rot.y, rot.z, rot.w,
+                    joint.radius,
+                ));
+            }
+            sexp.push(')');
+            Some(format!(
+                "(:type :response :id {} :status :ok :hand :{} :joint-count {} :joints {})",
+                msg_id, hand_str, joints.len(), sexp
+            ))
+        }
+        None => Some(error_response(
+            msg_id,
+            &format!("hand not tracked: {}", hand_str),
+        )),
+    }
+}
+
+fn handle_hand_tracking_distance(
+    state: &mut EwwmState,
+    msg_id: i64,
+    value: &Value,
+) -> Option<String> {
+    let hand_str = match get_string(value, "hand") {
+        Some(h) => h,
+        None => return Some(error_response(msg_id, "missing :hand (left or right)")),
+    };
+    let joint_a = match get_string(value, "joint-a") {
+        Some(j) => j,
+        None => return Some(error_response(msg_id, "missing :joint-a")),
+    };
+    let joint_b = match get_string(value, "joint-b") {
+        Some(j) => j,
+        None => return Some(error_response(msg_id, "missing :joint-b")),
+    };
+
+    match state.vr_state.hand_tracking.joint_distance_by_name(&hand_str, &joint_a, &joint_b) {
+        Some(distance) => Some(format!(
+            "(:type :response :id {} :status :ok :hand :{} :joint-a \"{}\" :joint-b \"{}\" :distance {:.4})",
+            msg_id, hand_str,
+            escape_string(&joint_a),
+            escape_string(&joint_b),
+            distance,
+        )),
+        None => Some(error_response(
+            msg_id,
+            &format!("could not compute distance: {} {} <-> {}", hand_str, joint_a, joint_b),
+        )),
+    }
+}
+
+// ── Gesture handlers (Week 18) ─────────────────────────────
+
+fn handle_gesture_status(state: &mut EwwmState, msg_id: i64) -> Option<String> {
+    let status = state.vr_state.gesture.status_sexp();
+    Some(format!(
+        "(:type :response :id {} :status :ok :gesture {})",
+        msg_id, status
+    ))
+}
+
+fn handle_gesture_config(
+    state: &mut EwwmState,
+    msg_id: i64,
+    value: &Value,
+) -> Option<String> {
+    if let Some(pinch) = get_float(value, "pinch-threshold") {
+        state.vr_state.gesture.config.pinch_threshold_m = pinch as f32;
+    }
+    if let Some(grab) = get_float(value, "grab-threshold") {
+        state.vr_state.gesture.config.grab_threshold_m = grab as f32;
+    }
+    if let Some(swipe) = get_float(value, "swipe-min-velocity") {
+        state.vr_state.gesture.config.swipe_min_velocity = swipe as f32;
+    }
+    if let Some(debounce) = get_float(value, "debounce-ms") {
+        state.vr_state.gesture.config.debounce_ms = debounce;
+    }
+    if let Some(enabled) = get_bool(value, "enabled") {
+        state.vr_state.gesture.config.enabled = enabled;
+    }
+
+    let status = state.vr_state.gesture.status_sexp();
+    Some(format!(
+        "(:type :response :id {} :status :ok :gesture {})",
+        msg_id, status
+    ))
+}
+
+fn handle_gesture_bind(
+    state: &mut EwwmState,
+    msg_id: i64,
+    value: &Value,
+) -> Option<String> {
+    let gesture = match get_string(value, "gesture") {
+        Some(g) => g,
+        None => return Some(error_response(msg_id, "missing :gesture")),
+    };
+    let hand = match get_string(value, "hand") {
+        Some(h) => h,
+        None => return Some(error_response(msg_id, "missing :hand (left or right)")),
+    };
+    let action = match get_string(value, "action") {
+        Some(a) => a,
+        None => return Some(error_response(msg_id, "missing :action")),
+    };
+
+    state.vr_state.gesture.add_binding(&gesture, &hand, &action);
+    let count = state.vr_state.gesture.binding_count();
+    Some(format!(
+        "(:type :response :id {} :status :ok :gesture \"{}\" :hand :{} :action \"{}\" :bindings {})",
+        msg_id,
+        escape_string(&gesture),
+        hand,
+        escape_string(&action),
+        count,
+    ))
+}
+
+fn handle_gesture_unbind(
+    state: &mut EwwmState,
+    msg_id: i64,
+    value: &Value,
+) -> Option<String> {
+    let gesture = match get_string(value, "gesture") {
+        Some(g) => g,
+        None => return Some(error_response(msg_id, "missing :gesture")),
+    };
+    let hand = match get_string(value, "hand") {
+        Some(h) => h,
+        None => return Some(error_response(msg_id, "missing :hand (left or right)")),
+    };
+
+    let removed = state.vr_state.gesture.remove_binding(&gesture, &hand);
+    if removed {
+        Some(ok_response(msg_id))
+    } else {
+        Some(error_response(
+            msg_id,
+            &format!("no binding for gesture {} hand {}", gesture, hand),
+        ))
+    }
+}
+
+fn handle_gesture_bindings(state: &mut EwwmState, msg_id: i64) -> Option<String> {
+    let bindings = state.vr_state.gesture.bindings_sexp();
+    Some(format!(
+        "(:type :response :id {} :status :ok :bindings {})",
+        msg_id, bindings
+    ))
+}
+
+// ── Virtual keyboard handlers (Week 18) ────────────────────
+
+fn handle_keyboard_show(state: &mut EwwmState, msg_id: i64) -> Option<String> {
+    state.vr_state.virtual_keyboard.show();
+    Some(ok_response(msg_id))
+}
+
+fn handle_keyboard_hide(state: &mut EwwmState, msg_id: i64) -> Option<String> {
+    state.vr_state.virtual_keyboard.hide();
+    Some(ok_response(msg_id))
+}
+
+fn handle_keyboard_toggle(state: &mut EwwmState, msg_id: i64) -> Option<String> {
+    state.vr_state.virtual_keyboard.toggle();
+    let visible = if state.vr_state.virtual_keyboard.visible { "t" } else { "nil" };
+    Some(format!(
+        "(:type :response :id {} :status :ok :visible {})",
+        msg_id, visible
+    ))
+}
+
+fn handle_keyboard_layout(
+    state: &mut EwwmState,
+    msg_id: i64,
+    value: &Value,
+) -> Option<String> {
+    let layout_str = match get_string(value, "layout") {
+        Some(l) => l,
+        None => return Some(error_response(msg_id, "missing :layout")),
+    };
+
+    match state.vr_state.virtual_keyboard.set_layout_by_name(&layout_str) {
+        Ok(()) => Some(format!(
+            "(:type :response :id {} :status :ok :layout \"{}\")",
+            msg_id, escape_string(&layout_str)
+        )),
+        Err(msg) => Some(error_response(
+            msg_id,
+            &format!("invalid :layout (use qwerty, dvorak, colemak): {}", msg),
+        )),
+    }
+}
+
+fn handle_keyboard_status(state: &mut EwwmState, msg_id: i64) -> Option<String> {
+    let status = state.vr_state.virtual_keyboard.status_sexp();
+    Some(format!(
+        "(:type :response :id {} :status :ok :keyboard {})",
+        msg_id, status
+    ))
+}
+
 // ── Helpers ────────────────────────────────────────────────
 
 fn ok_response(id: i64) -> String {
@@ -1577,6 +1885,17 @@ fn get_int(value: &Value, key: &str) -> Option<i64> {
 /// Extract a string value from an s-expression plist.
 fn get_string(value: &Value, key: &str) -> Option<String> {
     get_keyword(value, key)
+}
+
+/// Extract a boolean value from an s-expression plist.
+/// Treats "t" as true, "nil" as false.
+fn get_bool(value: &Value, key: &str) -> Option<bool> {
+    get_keyword(value, key).map(|s| s != "nil")
+}
+
+/// Extract a floating-point value from an s-expression plist.
+fn get_float(value: &Value, key: &str) -> Option<f64> {
+    get_keyword(value, key).and_then(|s| s.parse().ok())
 }
 
 /// Flatten a possibly nested list/cons structure into a Vec of leaf values.
