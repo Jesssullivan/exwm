@@ -73,6 +73,7 @@
             wayland-protocols
             wayland-scanner
             libdrm
+            libgbm
             mesa
             libinput
             libxkbcommon
@@ -220,6 +221,7 @@
             wayland-protocols
             wayland-scanner
             libdrm
+            libgbm
             mesa
             libinput
             libxkbcommon
@@ -296,6 +298,7 @@
             wayland-protocols
             wayland-scanner
             libdrm
+            libgbm
             mesa
             libinput
             libxkbcommon
