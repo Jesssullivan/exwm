@@ -13,8 +13,10 @@ use smithay::{
         LayerSurface,
     },
     output::Output,
+    reexports::wayland_server::protocol::wl_output::WlOutput,
     wayland::shell::wlr_layer::{
-        ExclusiveZone, WlrLayerShellHandler, WlrLayerShellState,
+        ExclusiveZone, Layer, WlrLayerShellHandler, WlrLayerShellState,
+        LayerSurface as WlrLayerSurface,
     },
 };
 use tracing::{debug, info, warn};
@@ -24,19 +26,30 @@ impl WlrLayerShellHandler for EwwmState {
         &mut self.layer_shell_state
     }
 
-    fn new_layer_surface(&mut self, surface: LayerSurface) {
-        info!("layer-shell: new surface");
+    fn new_layer_surface(
+        &mut self,
+        surface: WlrLayerSurface,
+        wl_output: Option<WlOutput>,
+        _layer: Layer,
+        namespace: String,
+    ) {
+        info!(%namespace, "layer-shell: new surface");
 
-        // Default to first output
-        let output = self.space.outputs().next().cloned();
+        // Find the target output (default to first output)
+        let output = wl_output
+            .as_ref()
+            .and_then(Output::from_resource)
+            .or_else(|| self.space.outputs().next().cloned());
 
         let Some(output) = output else {
             warn!("layer-shell: no output available for layer surface");
             return;
         };
 
+        // Create the desktop LayerSurface wrapper and map it
+        let layer_surface = LayerSurface::new(surface, namespace);
         let mut map = layer_map_for_output(&output);
-        if let Err(e) = map.map_layer(&surface) {
+        if let Err(e) = map.map_layer(&layer_surface) {
             warn!("layer-shell: failed to map layer surface: {}", e);
             return;
         }
@@ -48,20 +61,30 @@ impl WlrLayerShellHandler for EwwmState {
         debug!("layer-shell: surface mapped");
     }
 
-    fn layer_destroyed(&mut self, surface: LayerSurface) {
+    fn layer_destroyed(&mut self, surface: WlrLayerSurface) {
         debug!("layer-shell: surface destroyed");
 
         let outputs: Vec<Output> = self.space.outputs().cloned().collect();
 
         let target_output = outputs.into_iter().find(|o| {
             let map = layer_map_for_output(o);
-            map.layers().any(|l| l == &surface)
+            let found = map.layers().any(|l| l.layer_surface() == &surface);
+            found
         });
 
         if let Some(output) = target_output {
-            let mut map = layer_map_for_output(&output);
-            map.unmap_layer(&surface);
+            let map = layer_map_for_output(&output);
+            let layer = map
+                .layers()
+                .find(|l| l.layer_surface() == &surface)
+                .cloned();
             drop(map);
+
+            if let Some(layer) = layer {
+                let mut map = layer_map_for_output(&output);
+                map.unmap_layer(&layer);
+                drop(map);
+            }
             self.recalculate_usable_area(&output);
         }
     }

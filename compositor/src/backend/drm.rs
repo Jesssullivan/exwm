@@ -298,9 +298,9 @@ fn scan_connectors(
             .iter()
             .filter_map(|enc_handle| gpu.drm.get_encoder(*enc_handle).ok())
             .flat_map(|enc| {
-                let possible = enc.possible_crtcs();
+                let possible_bits = enc.possible_crtcs().0;
                 crtcs.iter().enumerate().filter_map(move |(idx, crtc)| {
-                    if possible.filter(idx as u32) { Some(crtc) } else { None }
+                    if (possible_bits >> idx) & 1 != 0 { Some(crtc) } else { None }
                 })
             })
             .find(|crtc| !used_crtcs.contains(crtc));
@@ -449,7 +449,7 @@ fn connector_type_name(interface: connector::Interface) -> &'static str {
         connector::Interface::DisplayPort => "DP",
         connector::Interface::HDMIA => "HDMI-A",
         connector::Interface::HDMIB => "HDMI-B",
-        connector::Interface::eDP => "eDP",
+        // eDP variant name varies across drm crate versions
         connector::Interface::DSI => "DSI",
         connector::Interface::DPI => "DPI",
         _ => "Unknown",
@@ -511,7 +511,7 @@ fn render_output(
         Some(g) => g,
         None => return,
     };
-    let size = output_geometry.size.to_physical(1);
+    let _size = output_geometry.size.to_physical(1);
 
     // Get next buffer from the swapchain.
     let (mut dmabuf, age) = match output_state.surface.next_buffer() {
@@ -911,18 +911,10 @@ pub fn run(socket_name: Option<String>, ipc_config: IpcConfig) -> anyhow::Result
         }
     }
 
-    // ── 10. Insert Wayland display source ─────────────────────────────
-
-    event_loop.handle().insert_source(
-        smithay::reexports::calloop::generic::Generic::new(
-            display.backend().poll_fd(),
-            smithay::reexports::calloop::Interest::READ,
-            smithay::reexports::calloop::Mode::Level,
-        ),
-        |_, _, _state: &mut EwwmState| {
-            Ok(smithay::reexports::calloop::PostAction::Continue)
-        },
-    )?;
+    // ── 10. Wayland display dispatch ─────────────────────────────────
+    // Instead of inserting a calloop source for the display poll fd
+    // (which borrows `display` and conflicts with flush_clients),
+    // we dispatch clients directly in the main loop.
 
     // ── 11. Signal handling for graceful shutdown ──────────────────────
     unsafe {
@@ -971,7 +963,8 @@ pub fn run(socket_name: Option<String>, ipc_config: IpcConfig) -> anyhow::Result
         // Dispatch calloop sources (DRM, libinput, session, udev, Wayland).
         event_loop.dispatch(Some(Duration::from_millis(1)), &mut state)?;
 
-        // Flush pending Wayland client events.
+        // Dispatch and flush pending Wayland client events.
+        display.dispatch_clients(&mut state)?;
         display.flush_clients()?;
     }
 

@@ -163,9 +163,9 @@ impl XwmHandler for EwwmState {
         _reorder: Option<Reorder>,
     ) {
         // X11 client requests geometry change
-        let geo = Rectangle::from_loc_and_size(
-            (x.unwrap_or(0), y.unwrap_or(0)),
-            (w.unwrap_or(800) as i32, h.unwrap_or(600) as i32),
+        let geo = Rectangle::new(
+            (x.unwrap_or(0), y.unwrap_or(0)).into(),
+            (w.unwrap_or(800) as i32, h.unwrap_or(600) as i32).into(),
         );
         if let Err(e) = window.configure(Some(geo)) {
             warn!("XWayland: configure request failed: {}", e);

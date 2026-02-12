@@ -193,7 +193,7 @@ pub fn run(socket_name: Option<String>, ipc_config: IpcConfig) -> anyhow::Result
                 crate::input::handle_input(&mut state, event);
             }
             _ => {}
-        }).map_err(|e| anyhow::anyhow!("winit dispatch error: {:?}", e))?;
+        });
 
         // Poll IPC clients
         ipc::IpcServer::poll_clients(&mut state);

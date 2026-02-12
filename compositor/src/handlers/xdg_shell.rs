@@ -76,7 +76,7 @@ impl XdgShellHandler for EwwmState {
         };
 
         // Try to grab
-        if let Ok(mut grab) = self.popups.grab_popup(root, kind, &seat, serial) {
+        if let Ok(grab) = self.popups.grab_popup(root, kind, &seat, serial) {
             if let Some(keyboard) = seat.get_keyboard() {
                 if let Some(focus) = grab.current_grab() {
                     keyboard.set_focus(self, Some(focus), serial);
