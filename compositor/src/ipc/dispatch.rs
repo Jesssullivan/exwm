@@ -1,6 +1,7 @@
 //! IPC message dispatch — parse s-expressions and route to handlers.
 
 use crate::state::EwwmState;
+use super::server::IpcServer;
 use lexpr::Value;
 use tracing::{debug, warn};
 
@@ -462,16 +463,64 @@ fn handle_surface_resize(state: &mut EwwmState, msg_id: i64, value: &Value) -> O
 }
 
 fn handle_surface_fullscreen(
-    _state: &mut EwwmState,
+    state: &mut EwwmState,
     msg_id: i64,
-    _value: &Value,
+    value: &Value,
 ) -> Option<String> {
-    // Stub — fullscreen toggle
+    use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::State as ToplevelState;
+
+    let surface_id = match get_int(value, "surface-id") {
+        Some(id) => id as u64,
+        None => return Some(error_response(msg_id, "missing :surface-id")),
+    };
+    let enable = get_bool(value, "enable").unwrap_or(true);
+
+    if !state.surfaces.contains_key(&surface_id) {
+        return Some(error_response(msg_id, &format!("unknown surface: {surface_id}")));
+    }
+
+    if let Some(win) = state.find_window(surface_id) {
+        if let Some(toplevel) = win.toplevel() {
+            toplevel.with_pending_state(|s| {
+                if enable {
+                    s.states.set(ToplevelState::Fullscreen);
+                    // Set size to full output
+                } else {
+                    s.states.unset(ToplevelState::Fullscreen);
+                }
+            });
+            toplevel.send_pending_configure();
+            debug!(surface_id, fullscreen = enable, "fullscreen toggle");
+        }
+    }
+
     Some(ok_response(msg_id))
 }
 
-fn handle_surface_float(_state: &mut EwwmState, msg_id: i64, _value: &Value) -> Option<String> {
-    // Stub — float toggle
+fn handle_surface_float(state: &mut EwwmState, msg_id: i64, value: &Value) -> Option<String> {
+    let surface_id = match get_int(value, "surface-id") {
+        Some(id) => id as u64,
+        None => return Some(error_response(msg_id, "missing :surface-id")),
+    };
+    let enable = get_bool(value, "enable").unwrap_or(true);
+
+    let data = match state.surfaces.get_mut(&surface_id) {
+        Some(d) => d,
+        None => return Some(error_response(msg_id, &format!("unknown surface: {surface_id}"))),
+    };
+
+    data.floating = enable;
+    debug!(surface_id, floating = enable, "float toggle");
+
+    let event = format_event(
+        "surface-float-changed",
+        &[
+            ("id", &surface_id.to_string()),
+            ("floating", if enable { "t" } else { "nil" }),
+        ],
+    );
+    IpcServer::broadcast_event(state, &event);
+
     Some(ok_response(msg_id))
 }
 
@@ -490,11 +539,21 @@ fn handle_workspace_list(state: &mut EwwmState, msg_id: i64) -> Option<String> {
         } else {
             "nil"
         };
+        // Collect surface IDs on this workspace
+        let surface_ids: Vec<String> = state
+            .surfaces
+            .iter()
+            .filter(|(_, d)| d.workspace == i)
+            .map(|(id, _)| id.to_string())
+            .collect();
+        let surfaces_sexp = format!("({})", surface_ids.join(" "));
         workspaces.push_str(&format!(
-            "(:index {} :name \"{}\" :surfaces () :active {})",
+            "(:index {} :name \"{}\" :surfaces {} :active {} :count {})",
             i,
             i + 1,
-            active
+            surfaces_sexp,
+            active,
+            surface_ids.len(),
         ));
     }
     workspaces.push(')');
@@ -506,21 +565,53 @@ fn handle_workspace_list(state: &mut EwwmState, msg_id: i64) -> Option<String> {
 }
 
 fn handle_workspace_move_surface(
-    _state: &mut EwwmState,
+    state: &mut EwwmState,
     msg_id: i64,
-    _value: &Value,
+    value: &Value,
 ) -> Option<String> {
-    // Stub — move surface to workspace
+    let surface_id = match get_int(value, "surface-id") {
+        Some(id) => id as u64,
+        None => return Some(error_response(msg_id, "missing :surface-id")),
+    };
+    let workspace = match get_int(value, "workspace") {
+        Some(w) => w as usize,
+        None => return Some(error_response(msg_id, "missing :workspace")),
+    };
+
+    let data = match state.surfaces.get_mut(&surface_id) {
+        Some(d) => d,
+        None => return Some(error_response(msg_id, &format!("unknown surface: {surface_id}"))),
+    };
+
+    let old_workspace = data.workspace;
+    data.workspace = workspace;
+    debug!(surface_id, from = old_workspace, to = workspace, "workspace move");
+
+    let event = format_event(
+        "surface-workspace-changed",
+        &[
+            ("id", &surface_id.to_string()),
+            ("old-workspace", &old_workspace.to_string()),
+            ("new-workspace", &workspace.to_string()),
+        ],
+    );
+    IpcServer::broadcast_event(state, &event);
+
     Some(ok_response(msg_id))
 }
 
-fn handle_layout_set(_state: &mut EwwmState, msg_id: i64, _value: &Value) -> Option<String> {
-    // Stub — set layout algorithm
+fn handle_layout_set(_state: &mut EwwmState, msg_id: i64, value: &Value) -> Option<String> {
+    // Layout is driven by Emacs (the WM brain). The compositor just
+    // acknowledges the request. Emacs calls surface-move / surface-resize
+    // to position each window.
+    let layout = get_string(value, "layout").unwrap_or_default();
+    debug!(layout, "layout set (Emacs-driven)");
     Some(ok_response(msg_id))
 }
 
 fn handle_layout_cycle(_state: &mut EwwmState, msg_id: i64) -> Option<String> {
-    // Stub — cycle layout
+    // Layout cycling is handled by Emacs. ACK the request.
+    debug!("layout cycle (Emacs-driven)");
     Some(ok_response(msg_id))
 }
 
