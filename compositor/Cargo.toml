@@ -12,17 +12,18 @@ path = "src/main.rs"
 
 [features]
 default = ["full-backend"]
-full-backend = []   # enables DRM/winit backends (requires libseat, libinput, DRM)
+full-backend = [    # enables DRM/winit backends (requires libseat, libinput, DRM, udev)
+    "smithay/backend_drm",
+    "smithay/backend_gbm",
+    "smithay/backend_libinput",
+    "smithay/backend_session_libseat",
+    "smithay/backend_udev",
+    "smithay/backend_winit",
+]
 vr = ["openxrs"]    # enables OpenXR VR runtime integration
 
 [dependencies]
 smithay = { version = "0.7", default-features = false, features = [
-    "backend_drm",
-    "backend_gbm",
-    "backend_libinput",
-    "backend_session_libseat",
-    "backend_udev",
-    "backend_winit",
     "desktop",
     "renderer_gl",
     "wayland_frontend",
