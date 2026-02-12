@@ -109,7 +109,7 @@ SURFACE-DATA is a buffer or plist with an app-id field."
                        'ewwm-app-id surface-data)
                       "")
                   ewwm-qutebrowser-app-id)))
-   ((plistp surface-data)
+   ((and (listp surface-data) (keywordp (car-safe surface-data)))
     (string= (or (plist-get surface-data :app-id) "")
              ewwm-qutebrowser-app-id))
    (t nil)))
