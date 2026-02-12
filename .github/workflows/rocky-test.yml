@@ -28,8 +28,8 @@ jobs:
             gcc gcc-c++ make cmake pkg-config \
             wayland-devel mesa-libEGL-devel mesa-libGL-devel \
             libinput-devel libxkbcommon-devel libdrm-devel \
-            emacs-nox \
-            curl
+            emacs-nox
+          # curl-minimal is pre-installed in the container; skip full curl
           # libseat-devel may not be in default repos; install if available
           dnf install -y libseat-devel 2>/dev/null || true
 
