@@ -38,7 +38,7 @@ lexpr = "0.2"
 libc = "0.2"
 
 # VR: OpenXR runtime integration (behind "vr" feature flag)
-openxrs = { version = "0.19", optional = true }
+openxrs = { package = "openxr", version = "0.21", optional = true }
 
 [dev-dependencies]
 wayland-client = "0.31"

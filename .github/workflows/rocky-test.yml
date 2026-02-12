@@ -23,13 +23,15 @@ jobs:
       - name: Install build dependencies
         run: |
           dnf install -y epel-release
+          dnf config-manager --set-enabled crb
           dnf install -y \
             gcc gcc-c++ make cmake pkg-config \
             wayland-devel mesa-libEGL-devel mesa-libGL-devel \
-            libinput-devel libxkbcommon-devel libseat-devel \
-            libdrm-devel \
+            libinput-devel libxkbcommon-devel libdrm-devel \
             emacs-nox \
             curl
+          # libseat-devel may not be in default repos; install if available
+          dnf install -y libseat-devel 2>/dev/null || true
 
       - name: Install Rust
         run: |
