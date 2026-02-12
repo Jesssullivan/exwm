@@ -29,20 +29,20 @@
     (should (string-match-p "0\\.1\\.0" content))))
 
 (ert-deftest week20/plan-exists ()
-  "PLAN.md exists."
+  "PLAN.md removed; feature-matrix.md replaces it."
   (should (file-exists-p
-           (expand-file-name "PLAN.md" week20-test--root))))
+           (expand-file-name "docs/feature-matrix.md" week20-test--root))))
 
 (ert-deftest week20/justfile-exists ()
-  "Justfile exists."
+  "justfile exists."
   (should (file-exists-p
-           (expand-file-name "Justfile" week20-test--root))))
+           (expand-file-name "justfile" week20-test--root))))
 
 (ert-deftest week20/justfile-has-release-recipe ()
-  "Justfile contains release recipe."
+  "justfile contains release recipe."
   (let ((content (with-temp-buffer
                    (insert-file-contents
-                    (expand-file-name "Justfile" week20-test--root))
+                    (expand-file-name "justfile" week20-test--root))
                    (buffer-string))))
     (should (string-match-p "release" content))))
 

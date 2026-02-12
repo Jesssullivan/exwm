@@ -28,22 +28,22 @@
            (expand-file-name "compositor/src/secure_input.rs"
                              (locate-dominating-file default-directory ".git")))))
 
-;; ── Rust modules declared in main.rs ──────────────────────
+;; ── Rust modules declared in lib.rs ───────────────────────
 
 (ert-deftest week14/main-declares-autotype ()
-  "main.rs declares autotype module."
+  "lib.rs declares autotype module."
   (let* ((root (locate-dominating-file default-directory ".git"))
-         (main-rs (expand-file-name "compositor/src/main.rs" root)))
+         (lib-rs (expand-file-name "compositor/src/lib.rs" root)))
     (with-temp-buffer
-      (insert-file-contents main-rs)
+      (insert-file-contents lib-rs)
       (should (search-forward "pub mod autotype;" nil t)))))
 
 (ert-deftest week14/main-declares-secure-input ()
-  "main.rs declares secure_input module."
+  "lib.rs declares secure_input module."
   (let* ((root (locate-dominating-file default-directory ".git"))
-         (main-rs (expand-file-name "compositor/src/main.rs" root)))
+         (lib-rs (expand-file-name "compositor/src/lib.rs" root)))
     (with-temp-buffer
-      (insert-file-contents main-rs)
+      (insert-file-contents lib-rs)
       (should (search-forward "pub mod secure_input;" nil t)))))
 
 ;; ── State has new fields ───────────────────────────────────

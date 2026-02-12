@@ -115,11 +115,11 @@
       (should (search-forward "vr_state" nil t)))))
 
 (ert-deftest week7-integration/main-has-vr-mod ()
-  "Compositor main.rs declares vr module."
-  (let ((main-file (expand-file-name "compositor/src/main.rs"
-                                      (locate-dominating-file default-directory ".git"))))
+  "Compositor lib.rs declares vr module."
+  (let ((lib-file (expand-file-name "compositor/src/lib.rs"
+                                     (locate-dominating-file default-directory ".git"))))
     (with-temp-buffer
-      (insert-file-contents main-file)
+      (insert-file-contents lib-file)
       (should (search-forward "pub mod vr;" nil t)))))
 
 ;;; week7-integration-test.el ends here
