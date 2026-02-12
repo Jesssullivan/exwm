@@ -29,11 +29,11 @@
       (should (search-forward "peer_pid" nil t)))))
 
 (ert-deftest v031/server-reads-peer-cred ()
-  "server.rs reads peer credentials via peer_cred()."
+  "server.rs reads peer credentials via SO_PEERCRED."
   (let ((file (expand-file-name "compositor/src/ipc/server.rs" v031-test--root)))
     (with-temp-buffer
       (insert-file-contents file)
-      (should (search-forward "peer_cred()" nil t)))))
+      (should (search-forward "SO_PEERCRED" nil t)))))
 
 (ert-deftest v031/dispatch-checks-uid ()
   "hello handler checks peer UID against compositor UID."

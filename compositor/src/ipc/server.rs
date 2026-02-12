@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::io::{self, Read, Write};
+use std::os::unix::io::AsRawFd;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -57,6 +58,36 @@ impl RateLimiter {
     }
 }
 
+/// Read peer credentials from a Unix socket using SO_PEERCRED (Linux)
+/// or return None on unsupported platforms.
+fn get_peer_cred(stream: &UnixStream) -> Option<(Option<u32>, Option<i32>)> {
+    #[cfg(target_os = "linux")]
+    {
+        let fd = stream.as_raw_fd();
+        let mut cred: libc::ucred = unsafe { std::mem::zeroed() };
+        let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+        let ret = unsafe {
+            libc::getsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                libc::SO_PEERCRED,
+                &mut cred as *mut _ as *mut libc::c_void,
+                &mut len,
+            )
+        };
+        if ret == 0 {
+            Some((Some(cred.uid), Some(cred.pid)))
+        } else {
+            None
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = stream;
+        Some((None, None))
+    }
+}
+
 /// Per-client IPC connection state.
 pub struct IpcClient {
     pub stream: UnixStream,
@@ -76,14 +107,11 @@ impl IpcClient {
     fn new(stream: UnixStream, id: u64) -> Self {
         stream.set_nonblocking(true).ok();
 
-        // Read peer credentials via SO_PEERCRED (Linux/Unix).
-        let (peer_uid, peer_pid) = match stream.peer_cred() {
-            Ok(cred) => (Some(cred.uid()), cred.pid().map(|p| p as i32)),
-            Err(e) => {
-                warn!(id, "failed to read peer credentials: {}", e);
-                (None, None)
-            }
-        };
+        // Read peer credentials via SO_PEERCRED (Linux only, stable API).
+        let (peer_uid, peer_pid) = get_peer_cred(&stream).unwrap_or_else(|| {
+            warn!(id, "failed to read peer credentials");
+            (None, None)
+        });
 
         if let Some(uid) = peer_uid {
             debug!(id, peer_uid = uid, peer_pid = ?peer_pid, "peer credentials");
