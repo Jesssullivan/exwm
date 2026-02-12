@@ -177,6 +177,9 @@ pub fn handle_message(state: &mut EwwmState, client_id: u64, raw: &str) -> Optio
         Some("ipc-record-start") => handle_ipc_record_start(state, msg_id, &value),
         Some("ipc-record-stop") => handle_ipc_record_stop(state, msg_id),
         Some("ipc-record-status") => handle_ipc_record_status(state, msg_id),
+        // IPC security (v0.3.1)
+        Some("ipc-client-info") => handle_ipc_client_info(state, client_id, msg_id),
+        Some("ipc-rate-limit") => handle_ipc_rate_limit(state, client_id, msg_id, &value),
         Some(other) => Some(error_response(
             msg_id,
             &format!("unknown message type: {other}"),
@@ -201,17 +204,43 @@ fn handle_hello(
         ));
     }
 
-    let client_name = get_string(value, "client").unwrap_or_default();
-    debug!(client_id, client_name, "hello handshake");
+    // SO_PEERCRED: verify peer UID matches compositor UID.
+    // This prevents other users on the same host from connecting.
+    if let Some(client) = state.ipc_server.clients.get(&client_id) {
+        if let Some(peer_uid) = client.peer_uid {
+            let our_uid = unsafe { libc::getuid() };
+            if peer_uid != our_uid {
+                warn!(
+                    client_id,
+                    peer_uid,
+                    our_uid,
+                    "rejecting client: UID mismatch"
+                );
+                return Some(error_response(msg_id, "authentication failed: UID mismatch"));
+            }
+        }
+    }
 
+    let client_name = get_string(value, "client").unwrap_or_default();
+    debug!(client_id, client_name, "hello handshake (authenticated)");
+
+    // Store peer info and mark authenticated.
+    let peer_pid = state
+        .ipc_server
+        .clients
+        .get(&client_id)
+        .and_then(|c| c.peer_pid);
     if let Some(client) = state.ipc_server.clients.get_mut(&client_id) {
         client.authenticated = true;
     }
 
     let vr_flag = if state.vr_state.enabled { "t" } else { "nil" };
+    let pid_field = peer_pid
+        .map(|p| format!(" :peer-pid {}", p))
+        .unwrap_or_default();
     Some(format!(
-        "(:type :hello :id {} :version 1 :server \"ewwm-compositor\" :features (:xwayland t :vr {}))",
-        msg_id, vr_flag
+        "(:type :hello :id {} :version 1 :server \"ewwm-compositor\" :features (:xwayland t :vr {}){})",
+        msg_id, vr_flag, pid_field
     ))
 }
 
@@ -2226,6 +2255,45 @@ fn handle_ipc_record_status(state: &mut EwwmState, msg_id: i64) -> Option<String
         "(:type :response :id {} :status :ok :recorder {})",
         msg_id, status
     ))
+}
+
+// ── IPC security handlers ────────────────────────────────
+
+fn handle_ipc_client_info(
+    state: &mut EwwmState,
+    client_id: u64,
+    msg_id: i64,
+) -> Option<String> {
+    if let Some(client) = state.ipc_server.clients.get(&client_id) {
+        let uid = client.peer_uid.map(|u| u.to_string()).unwrap_or_else(|| "nil".to_string());
+        let pid = client.peer_pid.map(|p| p.to_string()).unwrap_or_else(|| "nil".to_string());
+        let rate = client.rate_limiter.max_per_second;
+        Some(format!(
+            "(:type :response :id {} :status :ok :client-id {} :peer-uid {} :peer-pid {} :authenticated t :rate-limit {})",
+            msg_id, client_id, uid, pid, rate
+        ))
+    } else {
+        Some(error_response(msg_id, "client not found"))
+    }
+}
+
+fn handle_ipc_rate_limit(
+    state: &mut EwwmState,
+    client_id: u64,
+    msg_id: i64,
+    value: &Value,
+) -> Option<String> {
+    let new_limit = match get_int(value, "limit") {
+        Some(n) if n > 0 && n <= 10000 => n as u32,
+        Some(_) => return Some(error_response(msg_id, "limit must be 1-10000")),
+        None => return Some(error_response(msg_id, "missing :limit parameter")),
+    };
+
+    if let Some(client) = state.ipc_server.clients.get_mut(&client_id) {
+        client.rate_limiter.max_per_second = new_limit;
+        debug!(client_id, new_limit, "rate limit updated");
+    }
+    Some(ok_response(msg_id))
 }
 
 // ── Helpers ────────────────────────────────────────────────

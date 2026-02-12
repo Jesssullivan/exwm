@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::io::{self, Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use calloop::generic::Generic;
 use calloop::{Interest, LoopHandle, Mode, PostAction};
@@ -18,6 +19,44 @@ const MAX_MESSAGE_SIZE: u32 = 1_048_576;
 /// Maximum write buffer before dropping old events (64 KiB).
 const MAX_WRITE_BUFFER: usize = 65_536;
 
+/// Default rate limit: messages per second per client.
+const DEFAULT_RATE_LIMIT: u32 = 200;
+
+/// Rate limit window duration in seconds.
+const RATE_LIMIT_WINDOW_SECS: u64 = 1;
+
+/// Per-client rate limiter.
+pub struct RateLimiter {
+    window_start: Instant,
+    message_count: u32,
+    pub max_per_second: u32,
+}
+
+impl RateLimiter {
+    fn new(max_per_second: u32) -> Self {
+        Self {
+            window_start: Instant::now(),
+            message_count: 0,
+            max_per_second,
+        }
+    }
+
+    /// Check if a message is allowed.  Returns true if within rate limit.
+    fn check(&mut self) -> bool {
+        let now = Instant::now();
+        let elapsed = now.duration_since(self.window_start);
+        if elapsed.as_secs() >= RATE_LIMIT_WINDOW_SECS {
+            // New window
+            self.window_start = now;
+            self.message_count = 1;
+            true
+        } else {
+            self.message_count += 1;
+            self.message_count <= self.max_per_second
+        }
+    }
+}
+
 /// Per-client IPC connection state.
 pub struct IpcClient {
     pub stream: UnixStream,
@@ -25,17 +64,40 @@ pub struct IpcClient {
     pub write_buf: Vec<u8>,
     pub authenticated: bool,
     pub id: u64,
+    /// Peer UID from SO_PEERCRED (Unix only).
+    pub peer_uid: Option<u32>,
+    /// Peer PID from SO_PEERCRED (Unix only).
+    pub peer_pid: Option<i32>,
+    /// Per-client rate limiter.
+    pub rate_limiter: RateLimiter,
 }
 
 impl IpcClient {
     fn new(stream: UnixStream, id: u64) -> Self {
         stream.set_nonblocking(true).ok();
+
+        // Read peer credentials via SO_PEERCRED (Linux/Unix).
+        let (peer_uid, peer_pid) = match stream.peer_cred() {
+            Ok(cred) => (Some(cred.uid()), cred.pid().map(|p| p as i32)),
+            Err(e) => {
+                warn!(id, "failed to read peer credentials: {}", e);
+                (None, None)
+            }
+        };
+
+        if let Some(uid) = peer_uid {
+            debug!(id, peer_uid = uid, peer_pid = ?peer_pid, "peer credentials");
+        }
+
         Self {
             stream,
             read_buf: Vec::with_capacity(4096),
             write_buf: Vec::new(),
             authenticated: false,
             id,
+            peer_uid,
+            peer_pid,
+            rate_limiter: RateLimiter::new(DEFAULT_RATE_LIMIT),
         }
     }
 
@@ -216,6 +278,25 @@ impl IpcServer {
             };
 
             for msg_str in messages {
+                // Rate limit check
+                let rate_ok = state
+                    .ipc_server
+                    .clients
+                    .get_mut(&client_id)
+                    .map(|c| c.rate_limiter.check())
+                    .unwrap_or(false);
+
+                if !rate_ok {
+                    warn!(client_id, "rate limit exceeded, dropping message");
+                    let resp = format!(
+                        "(:type :response :id 0 :status :error :reason \"rate limit exceeded\")"
+                    );
+                    if let Some(client) = state.ipc_server.clients.get_mut(&client_id) {
+                        client.enqueue_message(&resp);
+                    }
+                    continue;
+                }
+
                 if state.ipc_server.ipc_trace {
                     info!(client_id, "<< {}", msg_str);
                 }
