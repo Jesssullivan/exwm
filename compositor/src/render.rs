@@ -10,7 +10,7 @@ use smithay::{
     backend::renderer::{
         damage::OutputDamageTracker,
         element::surface::WaylandSurfaceRenderElement,
-        gles::{GlesFrame, GlesRenderer},
+        gles::{GlesRenderer, GlesTarget},
         Color32F, ImportAll, Renderer,
     },
     desktop::{
@@ -167,7 +167,7 @@ pub fn render_winit(
 /// damage into `drm_surface.queue_buffer(damage)`.
 pub fn render_drm(
     renderer: &mut GlesRenderer,
-    framebuffer: &mut GlesFrame,
+    framebuffer: &mut GlesTarget<'_>,
     damage_tracker: &mut OutputDamageTracker,
     space: &mut Space<Window>,
     output: &Output,

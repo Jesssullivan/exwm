@@ -46,7 +46,6 @@ use smithay::{
     output::{Mode as OutputMode, Output, PhysicalProperties, Subpixel},
     reexports::{
         calloop::{
-            signals::{Signal, Signals},
             EventLoop, LoopHandle, RegistrationToken,
         },
         drm::control::{
@@ -55,7 +54,7 @@ use smithay::{
         input::Libinput,
         wayland_server::Display,
     },
-    utils::{DeviceFd, Physical, Rectangle, Size, Transform},
+    utils::{DeviceFd, Size, Transform},
     xwayland::{XWayland, XWaylandEvent},
     xwayland::xwm::X11Wm,
 };
@@ -70,6 +69,10 @@ use tracing::{debug, error, info, warn};
 
 /// Global shutdown flag for signal handlers.
 static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+extern "C" fn drm_signal_handler(_sig: libc::c_int) {
+    SHUTDOWN_REQUESTED.store(true, Ordering::SeqCst);
+}
 
 /// Preferred color formats for GBM buffer allocation, in priority order.
 const COLOR_FORMATS: &[Fourcc] = &[
@@ -295,8 +298,9 @@ fn scan_connectors(
             .iter()
             .filter_map(|enc_handle| gpu.drm.get_encoder(*enc_handle).ok())
             .flat_map(|enc| {
-                crtcs.iter().filter(move |crtc| {
-                    enc.possible_crtcs().contains(**crtc)
+                let possible = enc.possible_crtcs();
+                crtcs.iter().enumerate().filter_map(move |(idx, crtc)| {
+                    if possible.filter(idx as u32) { Some(crtc) } else { None }
                 })
             })
             .find(|crtc| !used_crtcs.contains(crtc));
@@ -445,7 +449,7 @@ fn connector_type_name(interface: connector::Interface) -> &'static str {
         connector::Interface::DisplayPort => "DP",
         connector::Interface::HDMIA => "HDMI-A",
         connector::Interface::HDMIB => "HDMI-B",
-        connector::Interface::EDP => "eDP",
+        connector::Interface::eDP => "eDP",
         connector::Interface::DSI => "DSI",
         connector::Interface::DPI => "DPI",
         _ => "Unknown",
@@ -507,7 +511,7 @@ fn render_output(
         Some(g) => g,
         None => return,
     };
-    let size: Size<i32, Physical> = output_geometry.size;
+    let size = output_geometry.size.to_physical(1);
 
     // Get next buffer from the swapchain.
     let (mut dmabuf, age) = match output_state.surface.next_buffer() {
@@ -812,13 +816,41 @@ pub fn run(socket_name: Option<String>, ipc_config: IpcConfig) -> anyhow::Result
 
     // ── 8. Set up Wayland socket ──────────────────────────────────────
 
-    let socket = if let Some(name) = socket_name {
-        display.handle().add_socket_name(name)?
-    } else {
-        display.handle().add_socket_auto()?
-    };
-    info!("Wayland socket: {}", socket.to_string_lossy());
-    std::env::set_var("WAYLAND_DISPLAY", &socket);
+    let xdg_runtime_dir = std::env::var("XDG_RUNTIME_DIR")
+        .unwrap_or_else(|_| format!("/run/user/{}", unsafe { libc::getuid() }));
+    let socket_name_str = socket_name.unwrap_or_else(|| "wayland-0".to_string());
+    let socket_path = format!("{}/{}", xdg_runtime_dir, socket_name_str);
+    let _ = std::fs::remove_file(&socket_path);
+    let wayland_listener = std::os::unix::net::UnixListener::bind(&socket_path)?;
+    wayland_listener.set_nonblocking(true)?;
+    info!("Wayland socket: {}", socket_path);
+    std::env::set_var("WAYLAND_DISPLAY", &socket_name_str);
+
+    // Accept Wayland client connections
+    event_loop.handle().insert_source(
+        smithay::reexports::calloop::generic::Generic::new(
+            wayland_listener,
+            smithay::reexports::calloop::Interest::READ,
+            smithay::reexports::calloop::Mode::Level,
+        ),
+        |_, source, state: &mut EwwmState| {
+            match source.accept() {
+                Ok((stream, _)) => {
+                    if let Err(e) = state.display_handle.insert_client(
+                        stream,
+                        std::sync::Arc::new(crate::state::ClientState::default()),
+                    ) {
+                        warn!("failed to insert Wayland client: {}", e);
+                    }
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(e) => {
+                    warn!("Wayland socket accept error: {}", e);
+                }
+            }
+            Ok(smithay::reexports::calloop::PostAction::Continue)
+        },
+    ).map_err(|e| anyhow::anyhow!("failed to insert socket source: {:?}", e))?;
 
     // ── 9. Spawn XWayland ─────────────────────────────────────────────
 
@@ -832,7 +864,6 @@ pub fn run(socket_name: Option<String>, ipc_config: IpcConfig) -> anyhow::Result
         |_| (),
     ) {
         Ok((xwayland, client)) => {
-            let dh = display.handle();
             event_loop
                 .handle()
                 .insert_source(xwayland, move |event, _, state: &mut EwwmState| {
@@ -844,7 +875,6 @@ pub fn run(socket_name: Option<String>, ipc_config: IpcConfig) -> anyhow::Result
                             info!(display_number, "XWayland ready");
                             match X11Wm::start_wm(
                                 state.loop_handle.clone(),
-                                &dh,
                                 x11_socket,
                                 client.clone(),
                             ) {
@@ -895,19 +925,10 @@ pub fn run(socket_name: Option<String>, ipc_config: IpcConfig) -> anyhow::Result
     )?;
 
     // ── 11. Signal handling for graceful shutdown ──────────────────────
-
-    let signals = Signals::new([Signal::SIGTERM, Signal::SIGINT])?;
-    event_loop.handle().insert_source(
-        signals,
-        |event, _, state: &mut EwwmState| {
-            info!(
-                "received signal {:?}, initiating graceful shutdown",
-                event.signal()
-            );
-            SHUTDOWN_REQUESTED.store(true, Ordering::SeqCst);
-            state.running = false;
-        },
-    )?;
+    unsafe {
+        libc::signal(libc::SIGTERM, drm_signal_handler as libc::sighandler_t);
+        libc::signal(libc::SIGINT, drm_signal_handler as libc::sighandler_t);
+    }
 
     // ── 12. Initial render for all outputs ────────────────────────────
 

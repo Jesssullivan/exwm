@@ -13,7 +13,7 @@ use smithay::{
         EventLoop,
     },
     reexports::wayland_server::Display,
-    utils::{Rectangle, Size, Transform},
+    utils::Transform,
     xwayland::{XWayland, XWaylandEvent},
     xwayland::xwm::X11Wm,
 };
@@ -38,7 +38,7 @@ pub fn run(socket_name: Option<String>, ipc_config: IpcConfig) -> anyhow::Result
     // Initialize Winit backend
     let (mut backend, mut winit_evt) = winit_backend::init::<
         smithay::backend::renderer::gles::GlesRenderer,
-    >()?;
+    >().map_err(|e| anyhow::anyhow!("winit init failed: {:?}", e))?;
 
     // Create output matching window size
     let mode = OutputMode {
@@ -59,13 +59,41 @@ pub fn run(socket_name: Option<String>, ipc_config: IpcConfig) -> anyhow::Result
     state.space.map_output(&output, (0, 0));
 
     // Set up Wayland socket
-    let socket = if let Some(name) = socket_name {
-        display.handle().add_socket_name(name)?
-    } else {
-        display.handle().add_socket_auto()?
-    };
-    info!("Wayland socket: {}", socket.to_string_lossy());
-    std::env::set_var("WAYLAND_DISPLAY", &socket);
+    let xdg_runtime_dir = std::env::var("XDG_RUNTIME_DIR")
+        .unwrap_or_else(|_| format!("/run/user/{}", unsafe { libc::getuid() }));
+    let socket_name_str = socket_name.unwrap_or_else(|| "wayland-0".to_string());
+    let socket_path = format!("{}/{}", xdg_runtime_dir, socket_name_str);
+    let _ = std::fs::remove_file(&socket_path);
+    let listener = std::os::unix::net::UnixListener::bind(&socket_path)?;
+    listener.set_nonblocking(true)?;
+    info!("Wayland socket: {}", socket_path);
+    std::env::set_var("WAYLAND_DISPLAY", &socket_name_str);
+
+    // Accept Wayland client connections
+    event_loop.handle().insert_source(
+        smithay::reexports::calloop::generic::Generic::new(
+            listener,
+            smithay::reexports::calloop::Interest::READ,
+            smithay::reexports::calloop::Mode::Level,
+        ),
+        |_, source, state: &mut EwwmState| {
+            match source.accept() {
+                Ok((stream, _)) => {
+                    if let Err(e) = state.display_handle.insert_client(
+                        stream,
+                        std::sync::Arc::new(crate::state::ClientState::default()),
+                    ) {
+                        warn!("failed to insert Wayland client: {}", e);
+                    }
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(e) => {
+                    warn!("Wayland socket accept error: {}", e);
+                }
+            }
+            Ok(smithay::reexports::calloop::PostAction::Continue)
+        },
+    ).map_err(|e| anyhow::anyhow!("failed to insert socket source: {:?}", e))?;
 
     // Spawn XWayland
     match XWayland::spawn(
@@ -78,14 +106,12 @@ pub fn run(socket_name: Option<String>, ipc_config: IpcConfig) -> anyhow::Result
         |_| (),
     ) {
         Ok((xwayland, client)) => {
-            let dh = display.handle();
             event_loop.handle().insert_source(xwayland, move |event, _, state: &mut EwwmState| {
                 match event {
                     XWaylandEvent::Ready { x11_socket, display_number } => {
                         info!(display_number, "XWayland ready");
                         match X11Wm::start_wm(
                             state.loop_handle.clone(),
-                            &dh,
                             x11_socket,
                             client.clone(),
                         ) {
@@ -145,7 +171,7 @@ pub fn run(socket_name: Option<String>, ipc_config: IpcConfig) -> anyhow::Result
             );
             TimeoutAction::ToDuration(Duration::from_millis(16))
         },
-    )?;
+    ).map_err(|e| anyhow::anyhow!("failed to insert render timer: {:?}", e))?;
 
     info!("Winit backend initialized, entering event loop");
 
@@ -167,7 +193,7 @@ pub fn run(socket_name: Option<String>, ipc_config: IpcConfig) -> anyhow::Result
                 crate::input::handle_input(&mut state, event);
             }
             _ => {}
-        })?;
+        }).map_err(|e| anyhow::anyhow!("winit dispatch error: {:?}", e))?;
 
         // Poll IPC clients
         ipc::IpcServer::poll_clients(&mut state);

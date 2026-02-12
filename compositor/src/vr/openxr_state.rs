@@ -218,6 +218,7 @@ impl VrState {
             application_version: 1,
             engine_name: "smithay",
             engine_version: 1,
+            api_version: xr::Version::new(1, 0, 0),
         };
 
         let instance = match entry.create_instance(&app_info, &required_extensions, &[]) {

@@ -2250,7 +2250,7 @@ fn escape_string(s: &str) -> String {
 /// Extract a keyword value from an s-expression plist.
 /// Looks for `:key` followed by a value in a flat list.
 fn get_keyword(value: &Value, key: &str) -> Option<String> {
-    let keyword = format!(":{}", key);
+    let _keyword = format!(":{}", key);
     if let Value::Cons(_) = value {
         // Iterate pairs: (:key value :key value ...)
         // lexpr parses (:type :hello) as a list of cons/atoms

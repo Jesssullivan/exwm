@@ -19,12 +19,12 @@ use tracing::{debug, trace};
 /// Handle an input event from any backend.
 pub fn handle_input<B: InputBackend>(state: &mut EwwmState, event: InputEvent<B>) {
     match event {
-        InputEvent::Keyboard { event } => handle_keyboard(state, event),
+        InputEvent::Keyboard { event } => handle_keyboard::<B>(state, event),
         InputEvent::PointerMotionAbsolute { event } => {
-            handle_pointer_motion_absolute(state, event)
+            handle_pointer_motion_absolute::<B>(state, event)
         }
-        InputEvent::PointerButton { event } => handle_pointer_button(state, event),
-        InputEvent::PointerAxis { event } => handle_pointer_axis(state, event),
+        InputEvent::PointerButton { event } => handle_pointer_button::<B>(state, event),
+        InputEvent::PointerAxis { event } => handle_pointer_axis::<B>(state, event),
         _ => {}
     }
 }
